@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Build output
+build/
+
+# Runtime data (SQLite DBs, cloned repos)
+data/
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
