@@ -1,14 +1,19 @@
 /**
- * Groundwork MCP Server — SQLite Job Store
+ * Groundwork MCP Server — SQLite Job Store (sql.js / WASM)
  *
- * Uses better-sqlite3 for synchronous, high-performance SQLite operations.
- * All persistent state lives here: jobs, parsed files, symbols, dependency edges.
+ * Uses sql.js — a pure WASM SQLite that requires zero native compilation.
+ * No Visual Studio Build Tools, no node-gyp, works on every OS out of the box.
+ *
+ * Key difference from better-sqlite3: sql.js holds the DB in memory and
+ * we manually persist to disk on writes. This is fine for our use case
+ * (infrequent writes during ingestion, frequent reads during queries).
  *
  * Zero-cost: file-based SQLite, no Postgres, no hosted DB.
  */
 
-import Database from 'better-sqlite3';
-import type { Database as DatabaseType } from 'better-sqlite3';
+import initSqlJs from 'sql.js';
+import type { Database as SqlJsDatabase } from 'sql.js';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { config } from '../utils/config.js';
 import { logger } from '../utils/logger.js';
 import type {
@@ -21,25 +26,38 @@ import type {
 
 // ─── Database Singleton ──────────────────────────────────────────────────────
 
-let db: DatabaseType | null = null;
+let db: SqlJsDatabase | null = null;
 
 /**
- * Initialize the SQLite database, create tables if they don't exist.
+ * Initialize the SQLite database via sql.js (WASM).
+ * Loads existing DB from disk if present, otherwise creates a new one.
  * Must be called once at server startup.
  */
-export function initDatabase(): DatabaseType {
+export async function initDatabase(): Promise<SqlJsDatabase> {
   if (db) return db;
 
   logger.info(`Initializing SQLite database at: ${config.dbPath}`);
 
-  db = new Database(config.dbPath);
+  const SQL = await initSqlJs();
 
-  // Enable WAL mode for better concurrent read performance
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
+  // Load existing database from disk if it exists
+  if (existsSync(config.dbPath)) {
+    const fileBuffer = readFileSync(config.dbPath);
+    db = new SQL.Database(fileBuffer);
+    logger.info('Loaded existing database from disk');
+  } else {
+    db = new SQL.Database();
+    logger.info('Created new database');
+  }
+
+  // Enable WAL mode equivalent — not available in sql.js but we set pragma
+  db.run('PRAGMA foreign_keys = ON;');
 
   // Create all tables
-  db.exec(SCHEMA);
+  db.run(SCHEMA);
+
+  // Persist the initialized schema
+  persistDatabase();
 
   logger.info('Database initialized successfully');
   return db;
@@ -48,7 +66,7 @@ export function initDatabase(): DatabaseType {
 /**
  * Get the database instance. Throws if not initialized.
  */
-export function getDatabase(): DatabaseType {
+export function getDatabase(): SqlJsDatabase {
   if (!db) {
     throw new Error('Database not initialized. Call initDatabase() first.');
   }
@@ -56,10 +74,22 @@ export function getDatabase(): DatabaseType {
 }
 
 /**
+ * Persist the in-memory database to disk.
+ * Call this after any write operation.
+ */
+export function persistDatabase(): void {
+  if (!db) return;
+  const data = db.export();
+  const buffer = Buffer.from(data);
+  writeFileSync(config.dbPath, buffer);
+}
+
+/**
  * Close the database connection gracefully.
  */
 export function closeDatabase(): void {
   if (db) {
+    persistDatabase();
     db.close();
     db = null;
     logger.info('Database connection closed');
@@ -69,7 +99,6 @@ export function closeDatabase(): void {
 // ─── Schema ──────────────────────────────────────────────────────────────────
 
 const SCHEMA = `
-  -- Job tracking
   CREATE TABLE IF NOT EXISTS jobs (
     id TEXT PRIMARY KEY,
     repo_url TEXT NOT NULL,
@@ -87,7 +116,6 @@ const SCHEMA = `
     updated_at TEXT NOT NULL
   );
 
-  -- Parsed file records (per-file AST metadata)
   CREATE TABLE IF NOT EXISTS parsed_files (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
@@ -100,7 +128,6 @@ const SCHEMA = `
     UNIQUE(job_id, file_path)
   );
 
-  -- Symbol index (functions, classes, methods, variables, exports)
   CREATE TABLE IF NOT EXISTS symbols (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
@@ -113,7 +140,6 @@ const SCHEMA = `
     created_at TEXT NOT NULL
   );
 
-  -- Import/dependency edges (the dependency graph)
   CREATE TABLE IF NOT EXISTS edges (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
@@ -124,7 +150,6 @@ const SCHEMA = `
     created_at TEXT NOT NULL
   );
 
-  -- Indexes for query performance
   CREATE INDEX IF NOT EXISTS idx_parsed_files_job ON parsed_files(job_id);
   CREATE INDEX IF NOT EXISTS idx_symbols_job ON symbols(job_id);
   CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(job_id, symbol_name);
@@ -133,6 +158,32 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(job_id, source_file);
   CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(job_id, target_file);
 `;
+
+// ─── Helper: query rows as objects ───────────────────────────────────────────
+
+function queryAll<T>(sql: string, params: unknown[] = []): T[] {
+  const database = getDatabase();
+  const stmt = database.prepare(sql);
+  stmt.bind(params);
+
+  const results: T[] = [];
+  while (stmt.step()) {
+    const row = stmt.getAsObject();
+    results.push(row as T);
+  }
+  stmt.free();
+  return results;
+}
+
+function queryOne<T>(sql: string, params: unknown[] = []): T | null {
+  const results = queryAll<T>(sql, params);
+  return results.length > 0 ? results[0] : null;
+}
+
+function execute(sql: string, params: unknown[] = []): void {
+  const database = getDatabase();
+  database.run(sql, params);
+}
 
 // ─── Job Operations ──────────────────────────────────────────────────────────
 
@@ -146,14 +197,13 @@ export function createJob(
   branch: string,
 ): IngestJob {
   const now = new Date().toISOString();
-  const database = getDatabase();
 
-  const stmt = database.prepare(`
-    INSERT INTO jobs (id, repo_url, repo_name, branch, status, created_at, updated_at)
-    VALUES (?, ?, ?, ?, 'queued', ?, ?)
-  `);
-
-  stmt.run(id, repoUrl, repoName, branch, now, now);
+  execute(
+    `INSERT INTO jobs (id, repo_url, repo_name, branch, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 'queued', ?, ?)`,
+    [id, repoUrl, repoName, branch, now, now]
+  );
+  persistDatabase();
 
   logger.info(`Created job ${id} for ${repoName}`);
 
@@ -191,7 +241,6 @@ export function updateJobStatus(
     error_message?: string;
   },
 ): void {
-  const database = getDatabase();
   const now = new Date().toISOString();
 
   const fields: string[] = ['updated_at = ?'];
@@ -232,115 +281,95 @@ export function updateJobStatus(
 
   values.push(id);
 
-  const stmt = database.prepare(
-    `UPDATE jobs SET ${fields.join(', ')} WHERE id = ?`
-  );
-  stmt.run(...values);
+  execute(`UPDATE jobs SET ${fields.join(', ')} WHERE id = ?`, values);
+  persistDatabase();
 }
 
 /**
  * Get a job by ID.
  */
 export function getJob(id: string): IngestJob | null {
-  const database = getDatabase();
-  const row = database.prepare('SELECT * FROM jobs WHERE id = ?').get(id) as IngestJob | undefined;
-  return row ?? null;
+  return queryOne<IngestJob>('SELECT * FROM jobs WHERE id = ?', [id]);
 }
 
 /**
  * List all jobs, ordered by creation date (newest first).
  */
 export function listJobs(): IngestJob[] {
-  const database = getDatabase();
-  return database
-    .prepare('SELECT * FROM jobs ORDER BY created_at DESC')
-    .all() as IngestJob[];
+  return queryAll<IngestJob>('SELECT * FROM jobs ORDER BY created_at DESC');
 }
 
 // ─── Parsed File Operations ──────────────────────────────────────────────────
 
 /**
- * Insert a parsed file record. Uses REPLACE to handle re-ingestion.
+ * Insert a parsed file record.
  */
 export function insertParsedFile(jobId: string, file: ParsedFile): void {
-  const database = getDatabase();
   const now = new Date().toISOString();
 
-  const stmt = database.prepare(`
-    INSERT OR REPLACE INTO parsed_files (job_id, file_path, language, line_count, size_bytes, ast_json, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  stmt.run(jobId, file.filePath, file.language, file.lineCount, file.sizeBytes, file.astJson, now);
+  execute(
+    `INSERT OR REPLACE INTO parsed_files (job_id, file_path, language, line_count, size_bytes, ast_json, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [jobId, file.filePath, file.language, file.lineCount, file.sizeBytes, file.astJson, now]
+  );
 }
 
 /**
- * Batch-insert symbols for a job. Wrapped in a transaction for performance.
+ * Batch-insert symbols for a job.
  */
 export function insertSymbols(jobId: string, symbols: SymbolRecord[]): void {
   if (symbols.length === 0) return;
 
-  const database = getDatabase();
   const now = new Date().toISOString();
 
-  const stmt = database.prepare(`
-    INSERT INTO symbols (job_id, file_path, symbol_name, symbol_type, start_line, end_line, signature, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  const insertMany = database.transaction((syms: SymbolRecord[]) => {
-    for (const s of syms) {
-      stmt.run(jobId, s.filePath, s.symbolName, s.symbolType, s.startLine, s.endLine, s.signature, now);
-    }
-  });
-
-  insertMany(symbols);
+  for (const s of symbols) {
+    execute(
+      `INSERT INTO symbols (job_id, file_path, symbol_name, symbol_type, start_line, end_line, signature, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [jobId, s.filePath, s.symbolName, s.symbolType, s.startLine, s.endLine, s.signature, now]
+    );
+  }
 }
 
 /**
- * Batch-insert edges for a job. Wrapped in a transaction for performance.
+ * Batch-insert edges for a job.
  */
 export function insertEdges(jobId: string, edges: EdgeRecord[]): void {
   if (edges.length === 0) return;
 
-  const database = getDatabase();
   const now = new Date().toISOString();
 
-  const stmt = database.prepare(`
-    INSERT INTO edges (job_id, source_file, target_file, target_module, edge_type, created_at)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `);
+  for (const e of edges) {
+    execute(
+      `INSERT INTO edges (job_id, source_file, target_file, target_module, edge_type, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [jobId, e.sourceFile, e.targetFile, e.targetModule, e.edgeType, now]
+    );
+  }
+}
 
-  const insertMany = database.transaction((edgeList: EdgeRecord[]) => {
-    for (const e of edgeList) {
-      stmt.run(jobId, e.sourceFile, e.targetFile, e.targetModule, e.edgeType, now);
-    }
-  });
-
-  insertMany(edges);
+/**
+ * Persist after a batch of file inserts (call once after processing all files).
+ */
+export function persistAfterBatch(): void {
+  persistDatabase();
 }
 
 /**
  * Get all parsed files for a job.
  */
 export function getJobFiles(jobId: string): ParsedFile[] {
-  const database = getDatabase();
-  const rows = database
-    .prepare('SELECT file_path, language, line_count, size_bytes, ast_json FROM parsed_files WHERE job_id = ?')
-    .all(jobId) as Array<{
-      file_path: string;
-      language: string;
-      line_count: number;
-      size_bytes: number;
-      ast_json: string | null;
-    }>;
+  const rows = queryAll<Record<string, unknown>>(
+    'SELECT file_path, language, line_count, size_bytes, ast_json FROM parsed_files WHERE job_id = ?',
+    [jobId]
+  );
 
   return rows.map(r => ({
-    filePath: r.file_path,
+    filePath: r.file_path as string,
     language: r.language as ParsedFile['language'],
-    lineCount: r.line_count,
-    sizeBytes: r.size_bytes,
-    astJson: r.ast_json,
+    lineCount: r.line_count as number,
+    sizeBytes: r.size_bytes as number,
+    astJson: r.ast_json as string | null,
   }));
 }
 
@@ -348,25 +377,18 @@ export function getJobFiles(jobId: string): ParsedFile[] {
  * Get all symbols for a job.
  */
 export function getJobSymbols(jobId: string): SymbolRecord[] {
-  const database = getDatabase();
-  const rows = database
-    .prepare('SELECT file_path, symbol_name, symbol_type, start_line, end_line, signature FROM symbols WHERE job_id = ?')
-    .all(jobId) as Array<{
-      file_path: string;
-      symbol_name: string;
-      symbol_type: string;
-      start_line: number;
-      end_line: number;
-      signature: string | null;
-    }>;
+  const rows = queryAll<Record<string, unknown>>(
+    'SELECT file_path, symbol_name, symbol_type, start_line, end_line, signature FROM symbols WHERE job_id = ?',
+    [jobId]
+  );
 
   return rows.map(r => ({
-    filePath: r.file_path,
-    symbolName: r.symbol_name,
+    filePath: r.file_path as string,
+    symbolName: r.symbol_name as string,
     symbolType: r.symbol_type as SymbolRecord['symbolType'],
-    startLine: r.start_line,
-    endLine: r.end_line,
-    signature: r.signature,
+    startLine: r.start_line as number,
+    endLine: r.end_line as number,
+    signature: r.signature as string | null,
   }));
 }
 
@@ -374,20 +396,15 @@ export function getJobSymbols(jobId: string): SymbolRecord[] {
  * Get all edges for a job.
  */
 export function getJobEdges(jobId: string): EdgeRecord[] {
-  const database = getDatabase();
-  const rows = database
-    .prepare('SELECT source_file, target_file, target_module, edge_type FROM edges WHERE job_id = ?')
-    .all(jobId) as Array<{
-      source_file: string;
-      target_file: string | null;
-      target_module: string;
-      edge_type: string;
-    }>;
+  const rows = queryAll<Record<string, unknown>>(
+    'SELECT source_file, target_file, target_module, edge_type FROM edges WHERE job_id = ?',
+    [jobId]
+  );
 
   return rows.map(r => ({
-    sourceFile: r.source_file,
-    targetFile: r.target_file,
-    targetModule: r.target_module,
+    sourceFile: r.source_file as string,
+    targetFile: r.target_file as string | null,
+    targetModule: r.target_module as string,
     edgeType: r.edge_type as EdgeRecord['edgeType'],
   }));
 }
@@ -396,7 +413,10 @@ export function getJobEdges(jobId: string): EdgeRecord[] {
  * Delete all data for a job (cascade deletes parsed_files, symbols, edges).
  */
 export function deleteJob(jobId: string): void {
-  const database = getDatabase();
-  database.prepare('DELETE FROM jobs WHERE id = ?').run(jobId);
+  execute('DELETE FROM edges WHERE job_id = ?', [jobId]);
+  execute('DELETE FROM symbols WHERE job_id = ?', [jobId]);
+  execute('DELETE FROM parsed_files WHERE job_id = ?', [jobId]);
+  execute('DELETE FROM jobs WHERE id = ?', [jobId]);
+  persistDatabase();
   logger.info(`Deleted job ${jobId} and all associated data`);
 }

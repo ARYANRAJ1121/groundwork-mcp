@@ -7,6 +7,9 @@ build/
 # Runtime data (SQLite DBs, cloned repos)
 data/
 
+# Bundled WASM grammars (generated via: npx tsx scripts/download-grammars.ts)
+src/grammars/
+
 # Environment
 .env
 .env.local
