@@ -8,7 +8,7 @@
  * This is a deterministic, no-LLM step. Pure file-system traversal.
  */
 
-import { readdirSync, statSync, readFileSync } from 'node:fs';
+import { readdirSync, statSync } from 'node:fs';
 import { join, extname, basename, relative } from 'node:path';
 import { config } from '../utils/config.js';
 import { logger } from '../utils/logger.js';

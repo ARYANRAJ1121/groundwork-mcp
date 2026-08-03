@@ -8,7 +8,7 @@
  * Zero-cost: uses system git via simple-git, no hosted service.
  */
 
-import { simpleGit, SimpleGit, CleanOptions } from 'simple-git';
+import { simpleGit, type SimpleGit } from 'simple-git';
 import { join } from 'node:path';
 import { existsSync, rmSync } from 'node:fs';
 import { config } from '../utils/config.js';
