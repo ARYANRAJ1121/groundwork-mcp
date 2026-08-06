@@ -26,7 +26,7 @@ function main() {
   if (!existsSync(SOURCE_DIR)) {
     console.error('Error: tree-sitter-wasms not installed. Run: npm install tree-sitter-wasms');
     process.exit(1);
-  }
+  } 
 
   if (!existsSync(DEST_DIR)) {
     mkdirSync(DEST_DIR, { recursive: true });
