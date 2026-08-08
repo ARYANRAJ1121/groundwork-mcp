@@ -11,7 +11,10 @@
     "build": "tsc",
     "dev": "tsx src/index.ts",
     "start": "node build/index.js",
-    "clean": "rimraf build"
+    "clean": "rimraf build",
+    "prepare": "npm run build",
+    "postinstall": "npx tsx scripts/download-grammars.ts || true",
+    "test": "npx tsx scripts/test-ingest.ts"
   },
   "keywords": [
     "mcp",
