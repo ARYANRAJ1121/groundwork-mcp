@@ -1,8 +1,10 @@
-"""Groundwork MCP — Git cloner (gitpython shallow clone)."""
+"""Groundwork MCP — Git cloner (subprocess, works reliably on Windows)."""
 
+import shutil
+import subprocess
 import sys
 from pathlib import Path
-import git
+
 from . import config
 from .security import validate_repo_url, extract_repo_name
 from .types import CloneResult
@@ -11,7 +13,7 @@ from .types import CloneResult
 def clone_repo(repo_url: str, job_id: str, branch: str | None = None) -> CloneResult:
     """
     Shallow-clone a GitHub repo into an isolated job directory.
-    Uses depth=1 to minimize disk and network usage.
+    Uses subprocess directly for reliable cross-platform timeout support.
     """
     valid, error = validate_repo_url(repo_url)
     if not valid:
@@ -22,50 +24,71 @@ def clone_repo(repo_url: str, job_id: str, branch: str | None = None) -> CloneRe
 
     # Remove any stale clone
     if clone_path.exists():
-        import shutil
         shutil.rmtree(clone_path)
 
     _log(f"Cloning {repo_url} (branch: {branch or 'default'}) → {clone_path}")
 
-    clone_kwargs: dict = {
-        "depth": 1,
-        "single_branch": True,
-        "kill_after_timeout": config.CLONE_TIMEOUT_SECONDS,
-    }
+    # Build git clone command
+    cmd = [
+        "git", "clone",
+        "--depth", "1",
+        "--single-branch",
+        "--no-tags",
+    ]
     if branch:
-        clone_kwargs["branch"] = branch
+        cmd += ["--branch", branch]
+    cmd += [repo_url, str(clone_path)]
 
     try:
-        repo = git.Repo.clone_from(repo_url, str(clone_path), **clone_kwargs)
-        commit_sha = repo.head.commit.hexsha
-        _log(f"Clone complete: {repo_name} @ {commit_sha[:8]}")
-        return CloneResult(
-            clone_path=str(clone_path),
-            commit_sha=commit_sha,
-            repo_name=repo_name,
+        result = subprocess.run(
+            cmd,
+            timeout=config.CLONE_TIMEOUT_SECONDS,
+            capture_output=True,
+            text=True,
         )
-    except git.exc.GitCommandError as e:
-        # Clean up failed clone
+    except subprocess.TimeoutExpired:
         if clone_path.exists():
-            import shutil
             shutil.rmtree(clone_path)
-        msg = str(e)
-        if "timeout" in msg.lower():
-            raise TimeoutError(
-                f"Clone timed out after {config.CLONE_TIMEOUT_SECONDS}s. "
-                "Repository may be too large."
-            )
-        if "not found" in msg.lower() or "repository" in msg.lower():
+        raise TimeoutError(
+            f"Clone timed out after {config.CLONE_TIMEOUT_SECONDS}s. "
+            "Repository may be too large or network is slow."
+        )
+    except FileNotFoundError:
+        raise RuntimeError(
+            "git not found on PATH. Install git: https://git-scm.com/downloads"
+        )
+
+    if result.returncode != 0:
+        if clone_path.exists():
+            shutil.rmtree(clone_path)
+        stderr = result.stderr.lower()
+        if "not found" in stderr or "repository" in stderr or "does not exist" in stderr:
             raise ValueError(
                 f"Repository not found: {repo_url}. "
                 "Ensure the URL is correct and the repo is public."
             )
-        raise RuntimeError(f"Clone failed: {msg}")
+        raise RuntimeError(f"Clone failed (exit {result.returncode}): {result.stderr.strip()}")
+
+    # Get the HEAD commit SHA
+    try:
+        sha_result = subprocess.run(
+            ["git", "-C", str(clone_path), "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=10,
+        )
+        commit_sha = sha_result.stdout.strip() or "unknown"
+    except Exception:
+        commit_sha = "unknown"
+
+    _log(f"Clone complete: {repo_name} @ {commit_sha[:8]}")
+    return CloneResult(
+        clone_path=str(clone_path),
+        commit_sha=commit_sha,
+        repo_name=repo_name,
+    )
 
 
 def remove_clone(job_id: str) -> None:
     """Remove a cloned repository from disk."""
-    import shutil
     clone_path = config.REPOS_DIR / job_id
     if clone_path.exists():
         shutil.rmtree(clone_path)
