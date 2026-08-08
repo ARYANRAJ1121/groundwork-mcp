@@ -1,5 +1,6 @@
 """Groundwork MCP — Git cloner (subprocess, works reliably on Windows)."""
 
+import os
 import shutil
 import subprocess
 import sys
@@ -39,12 +40,22 @@ def clone_repo(repo_url: str, job_id: str, branch: str | None = None) -> CloneRe
         cmd += ["--branch", branch]
     cmd += [repo_url, str(clone_path)]
 
+    # Prevent git from hanging on credential prompts for public repos
+    git_env = {
+        **os.environ,
+        "GIT_TERMINAL_PROMPT": "0",   # Never prompt for credentials
+        "GIT_ASKPASS": "echo",         # Return empty string if asked for password
+        "GIT_SSH_COMMAND": "ssh -o BatchMode=yes",
+    }
+
     try:
         result = subprocess.run(
             cmd,
             timeout=config.CLONE_TIMEOUT_SECONDS,
             capture_output=True,
             text=True,
+            stdin=subprocess.DEVNULL,  # Never read from stdin
+            env=git_env,
         )
     except subprocess.TimeoutExpired:
         if clone_path.exists():
