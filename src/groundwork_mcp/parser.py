@@ -79,8 +79,16 @@ def _parse_file(f: SievedFile, repo_root: str) -> FileParseResult:
 
     parser = _PARSERS.get(f.language)
     if not parser:
-        # Non-parseable language (json, yaml, markdown) — store without AST
+        # Non-parseable language (json, yaml, markdown, toml) — store raw text content
+        # so get_file_content tool can return it to Claude
+        MAX_RAW = 200_000  # cap at ~200KB of raw text
+        try:
+            raw_text = source[:MAX_RAW].decode("utf-8", errors="replace")
+            parsed_file.ast_json = raw_text  # reuse ast_json column for raw content
+        except Exception:
+            pass
         return FileParseResult(file=parsed_file)
+
 
     try:
         tree = parser.parse(source)

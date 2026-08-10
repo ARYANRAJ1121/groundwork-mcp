@@ -1,13 +1,14 @@
 """
 Groundwork MCP Server — FastMCP implementation.
 
-6 tools:
+7 tools:
   ingest_repo          — clone + index a GitHub repo (async, returns job_id)
   get_ingest_status    — poll job progress
   list_ingested_repos  — list all indexed repos
   get_repo_summary     — high-level map of a repo (languages, symbols, deps)
   query_symbols        — search symbols by name / type / file
   get_import_edges     — get import dependency edges for a file
+  get_file_content     — read raw content of any indexed file (README, JSON, source)
 """
 
 import asyncio
@@ -29,11 +30,16 @@ from .security import validate_repo_url, extract_repo_name
 mcp = FastMCP(
     name="groundwork-mcp",
     instructions=(
-        "Groundwork indexes GitHub repositories locally using AST parsing. "
-        "Workflow: (1) call ingest_repo to start ingestion, (2) poll "
-        "get_ingest_status until status='complete', (3) use query_symbols, "
-        "get_import_edges, and get_repo_summary to explore the codebase "
-        "from the local SQLite index — no GitHub fetches needed."
+        "Groundwork indexes GitHub repositories locally. "
+        "IMPORTANT RULES:\n"
+        "1. NEVER answer questions about an ingested repo from memory or training data. "
+        "Always use the Groundwork tools to retrieve facts from the local index.\n"
+        "2. When asked 'what is this project about?' — call get_file_content(job_id, 'README.md') first.\n"
+        "3. When asked about code structure — call get_repo_summary(job_id) first.\n"
+        "4. When asked where a symbol is defined — call query_symbols(job_id, name=...).\n"
+        "5. When asked about imports or dependencies — call get_import_edges(job_id, file_path=...).\n"
+        "Workflow: ingest_repo → get_ingest_status (poll until complete) → "
+        "get_file_content / get_repo_summary / query_symbols / get_import_edges."
     ),
 )
 
@@ -360,6 +366,79 @@ def get_import_edges(
         lines.append("")
 
     return "\n".join(lines)
+
+
+# ── Tool 7: get_file_content ─────────────────────────────────────────────────
+
+@mcp.tool()
+def get_file_content(job_id: str, file_path: str) -> str:
+    """
+    Read the full content of any indexed file from the local knowledge base.
+    Works for ALL file types: README.md, source code, JSON configs, YAML, TOML, etc.
+    Use this to answer 'what does this file say/do?' or 'show me the README'.
+    ALWAYS call this instead of fetching from GitHub.
+
+    Args:
+        job_id:    The job_id from ingest_repo or list_ingested_repos
+        file_path: File path within the repo (partial match OK, e.g. 'README.md', 'src/main.py')
+    """
+    job = get_job(job_id)
+    if not job:
+        return f"Job not found: {job_id}"
+    if job.status != "complete":
+        return f"Job not complete (status: {job.status})"
+
+    from .database import get_db
+    db = get_db()
+
+    # Try exact match first, then partial
+    row = db.execute(
+        "SELECT file_path, language, line_count, size_bytes, ast_json "
+        "FROM parsed_files WHERE job_id=? AND file_path=? LIMIT 1",
+        (job_id, file_path),
+    ).fetchone()
+
+    if not row:
+        # Partial match
+        row = db.execute(
+            "SELECT file_path, language, line_count, size_bytes, ast_json "
+            "FROM parsed_files WHERE job_id=? AND file_path LIKE ? LIMIT 1",
+            (job_id, f"%{file_path}%"),
+        ).fetchone()
+
+    if not row:
+        # List available files to help
+        files = db.execute(
+            "SELECT file_path FROM parsed_files WHERE job_id=? ORDER BY file_path LIMIT 40",
+            (job_id,),
+        ).fetchall()
+        file_list = "\n".join(f"  {r['file_path']}" for r in files)
+        return (
+            f"File not found: {file_path!r}\n"
+            f"Available files in {job.repo_name}:\n{file_list}"
+        )
+
+    content = row["ast_json"]
+    lang = row["language"]
+    lines = row["line_count"]
+    size = row["size_bytes"]
+
+    if not content:
+        return (
+            f"File: {row['file_path']} ({lang}, {lines} lines, {size} bytes)\n"
+            f"[No text content stored — this is a binary or unparseable file]"
+        )
+
+    # For AST-parsed files (code), content is JSON — return a note instead of raw AST
+    if lang in ("javascript", "typescript", "tsx", "python") and content.startswith("{"):
+        return (
+            f"File: {row['file_path']} ({lang}, {lines} lines)\n"
+            f"[AST-indexed file — use query_symbols to find specific symbols in this file]\n"
+            f"Tip: query_symbols(job_id, file_path='{row['file_path']}') to list all symbols."
+        )
+
+    header = f"File: {row['file_path']} ({lang}, {lines} lines)\n{'─'*60}\n"
+    return header + content
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
