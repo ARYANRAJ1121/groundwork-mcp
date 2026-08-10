@@ -48,37 +48,55 @@ def clone_repo(repo_url: str, job_id: str, branch: str | None = None) -> CloneRe
         "GIT_SSH_COMMAND": "ssh -o BatchMode=yes",
     }
 
-    try:
-        result = subprocess.run(
-            cmd,
-            timeout=config.CLONE_TIMEOUT_SECONDS,
-            capture_output=True,
-            text=True,
-            stdin=subprocess.DEVNULL,  # Never read from stdin
-            env=git_env,
-        )
-    except subprocess.TimeoutExpired:
-        if clone_path.exists():
-            shutil.rmtree(clone_path)
-        raise TimeoutError(
-            f"Clone timed out after {config.CLONE_TIMEOUT_SECONDS}s. "
-            "Repository may be too large or network is slow."
-        )
-    except FileNotFoundError:
-        raise RuntimeError(
-            "git not found on PATH. Install git: https://git-scm.com/downloads"
-        )
+    max_attempts = 3
+    last_error: Exception = RuntimeError("Unknown error")
 
-    if result.returncode != 0:
-        if clone_path.exists():
-            shutil.rmtree(clone_path)
+    for attempt in range(1, max_attempts + 1):
+        if attempt > 1:
+            wait = 2 ** (attempt - 2)  # 1s, 2s
+            _log(f"Retry {attempt}/{max_attempts} in {wait}s...")
+            import time; time.sleep(wait)
+
+        try:
+            result = subprocess.run(
+                cmd,
+                timeout=config.CLONE_TIMEOUT_SECONDS,
+                capture_output=True,
+                text=True,
+                stdin=subprocess.DEVNULL,
+                env=git_env,
+            )
+        except subprocess.TimeoutExpired:
+            if clone_path.exists():
+                shutil.rmtree(clone_path)
+            raise TimeoutError(
+                f"Clone timed out after {config.CLONE_TIMEOUT_SECONDS}s. "
+                "Repository may be too large or network is slow."
+            )
+        except FileNotFoundError:
+            raise RuntimeError(
+                "git not found on PATH. Install git: https://git-scm.com/downloads"
+            )
+
+        if result.returncode == 0:
+            break
+
         stderr = result.stderr.lower()
-        if "not found" in stderr or "repository" in stderr or "does not exist" in stderr:
+        # Non-retryable: repo not found, bad URL
+        if "not found" in stderr or "does not exist" in stderr or "repository" in stderr:
+            if clone_path.exists():
+                shutil.rmtree(clone_path)
             raise ValueError(
                 f"Repository not found: {repo_url}. "
                 "Ensure the URL is correct and the repo is public."
             )
-        raise RuntimeError(f"Clone failed (exit {result.returncode}): {result.stderr.strip()}")
+
+        last_error = RuntimeError(f"Clone failed (exit {result.returncode}): {result.stderr.strip()}")
+        _log(f"Attempt {attempt} failed: {result.stderr.strip()[:100]}")
+        if clone_path.exists():
+            shutil.rmtree(clone_path)
+    else:
+        raise last_error
 
     # Get the HEAD commit SHA
     try:

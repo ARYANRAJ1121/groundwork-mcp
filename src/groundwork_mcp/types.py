@@ -63,7 +63,8 @@ class ParsedFile:
     language: SupportedLanguage
     line_count: int
     size_bytes: int
-    ast_json: Optional[str]
+    ast_json: Optional[str]      # AST for code files (internal use)
+    raw_content: Optional[str]   # Raw UTF-8 source for all file types
 
 
 @dataclass

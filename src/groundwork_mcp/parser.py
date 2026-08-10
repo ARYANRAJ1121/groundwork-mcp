@@ -66,8 +66,16 @@ def _parse_file(f: SievedFile, repo_root: str) -> FileParseResult:
                 line_count=0,
                 size_bytes=f.size_bytes,
                 ast_json=None,
+                raw_content=None,
             )
         )
+
+    # Decode raw content for storage (cap at 500KB)
+    MAX_RAW = 500_000
+    try:
+        raw_text = source[:MAX_RAW].decode("utf-8", errors="replace")
+    except Exception:
+        raw_text = None
 
     parsed_file = ParsedFile(
         file_path=f.relative_path,
@@ -75,24 +83,17 @@ def _parse_file(f: SievedFile, repo_root: str) -> FileParseResult:
         line_count=line_count,
         size_bytes=f.size_bytes,
         ast_json=None,
+        raw_content=raw_text,
     )
 
     parser = _PARSERS.get(f.language)
     if not parser:
-        # Non-parseable language (json, yaml, markdown, toml) — store raw text content
-        # so get_file_content tool can return it to Claude
-        MAX_RAW = 200_000  # cap at ~200KB of raw text
-        try:
-            raw_text = source[:MAX_RAW].decode("utf-8", errors="replace")
-            parsed_file.ast_json = raw_text  # reuse ast_json column for raw content
-        except Exception:
-            pass
+        # Non-parseable file (markdown, json, yaml, toml) — raw content already stored
         return FileParseResult(file=parsed_file)
-
 
     try:
         tree = parser.parse(source)
-        symbols = _extract_symbols(tree.root_node, f.relative_path, f.language)
+        symbols = _extract_symbols(tree.root_node, f.relative_path, f.language, source)
         edges = _extract_edges(tree.root_node, f.relative_path, repo_root)
         ast_json = _node_to_json(tree.root_node, source, depth=0, max_depth=4)
         parsed_file.ast_json = json.dumps(ast_json, separators=(",", ":"))
@@ -137,21 +138,21 @@ def _node_to_json(node: Node, source: bytes, depth: int, max_depth: int) -> dict
 
 # ── Symbol Extraction ─────────────────────────────────────────────────────────
 
-def _extract_symbols(root: Node, file_path: str, lang: str) -> list[SymbolRecord]:
+def _extract_symbols(root: Node, file_path: str, lang: str, source: bytes) -> list[SymbolRecord]:
     symbols: list[SymbolRecord] = []
-    _walk_symbols(root, file_path, lang, symbols)
+    _walk_symbols(root, file_path, lang, source, symbols)
     return symbols
 
 
-def _walk_symbols(node: Node, file_path: str, lang: str, out: list[SymbolRecord]) -> None:
-    sym = _node_to_symbol(node, file_path, lang)
+def _walk_symbols(node: Node, file_path: str, lang: str, source: bytes, out: list[SymbolRecord]) -> None:
+    sym = _node_to_symbol(node, file_path, lang, source)
     if sym:
         out.append(sym)
     for child in node.children:
-        _walk_symbols(child, file_path, lang, out)
+        _walk_symbols(child, file_path, lang, source, out)
 
 
-def _node_to_symbol(node: Node, file_path: str, lang: str) -> Optional[SymbolRecord]:
+def _node_to_symbol(node: Node, file_path: str, lang: str, source: bytes) -> Optional[SymbolRecord]:
     """Map a tree-sitter node type to a SymbolRecord."""
     t = node.type
 
@@ -159,45 +160,44 @@ def _node_to_symbol(node: Node, file_path: str, lang: str) -> Optional[SymbolRec
     if lang in ("javascript", "typescript", "tsx"):
         if t in ("function_declaration", "function_expression", "arrow_function"):
             name = _get_child_text(node, "identifier")
-            # For arrow functions assigned to variables, name comes from parent
-            return _make_symbol(file_path, name or "<anonymous>", "function", node)
+            return _make_symbol(file_path, name or "<anonymous>", "function", node, source)
 
         if t == "class_declaration":
             name = _get_child_text(node, "identifier")
-            return _make_symbol(file_path, name or "<anonymous>", "class", node)
+            return _make_symbol(file_path, name or "<anonymous>", "class", node, source)
 
         if t == "method_definition":
             name = _get_child_text(node, "property_identifier") or _get_child_text(node, "identifier")
-            return _make_symbol(file_path, name or "<anonymous>", "method", node)
+            return _make_symbol(file_path, name or "<anonymous>", "method", node, source)
 
         if t in ("interface_declaration",):
             name = _get_child_text(node, "type_identifier") or _get_child_text(node, "identifier")
-            return _make_symbol(file_path, name or "<anonymous>", "interface", node)
+            return _make_symbol(file_path, name or "<anonymous>", "interface", node, source)
 
         if t == "type_alias_declaration":
             name = _get_child_text(node, "type_identifier") or _get_child_text(node, "identifier")
-            return _make_symbol(file_path, name or "<anonymous>", "type_alias", node)
+            return _make_symbol(file_path, name or "<anonymous>", "type_alias", node, source)
 
         if t == "enum_declaration":
             name = _get_child_text(node, "identifier")
-            return _make_symbol(file_path, name or "<anonymous>", "enum", node)
+            return _make_symbol(file_path, name or "<anonymous>", "enum", node, source)
 
         if t in ("lexical_declaration", "variable_declaration"):
             # Get the first declarator
             for child in node.children:
                 if child.type == "variable_declarator":
                     name = _get_child_text(child, "identifier")
-                    return _make_symbol(file_path, name or "<var>", "variable", node)
+                    return _make_symbol(file_path, name or "<var>", "variable", node, source)
 
     # ── Python ──────────────────────────────────────────────────────
     if lang == "python":
         if t == "function_definition":
             name = _get_child_text(node, "identifier")
-            return _make_symbol(file_path, name or "<anonymous>", "function", node)
+            return _make_symbol(file_path, name or "<anonymous>", "function", node, source)
 
         if t == "class_definition":
             name = _get_child_text(node, "identifier")
-            return _make_symbol(file_path, name or "<anonymous>", "class", node)
+            return _make_symbol(file_path, name or "<anonymous>", "class", node, source)
 
         if t == "assignment":
             # Top-level variable assignment
@@ -212,15 +212,26 @@ def _node_to_symbol(node: Node, file_path: str, lang: str) -> Optional[SymbolRec
 
 
 def _make_symbol(
-    file_path: str, name: str, sym_type: str, node: Node
+    file_path: str, name: str, sym_type: str, node: Node, source: bytes
 ) -> SymbolRecord:
+    """Create a SymbolRecord, extracting the first line as the signature."""
+    # Extract the first non-empty line of the node as the signature
+    signature: Optional[str] = None
+    try:
+        first_line_bytes = source[node.start_byte:].split(b"\n")[0]
+        sig = first_line_bytes.decode("utf-8", errors="replace").strip()
+        if sig and len(sig) <= 200:  # cap to 200 chars
+            signature = sig
+    except Exception:
+        pass
+
     return SymbolRecord(
         file_path=file_path,
         symbol_name=name,
         symbol_type=sym_type,  # type: ignore[arg-type]
         start_line=node.start_point[0] + 1,
         end_line=node.end_point[0] + 1,
-        signature=None,
+        signature=signature,
     )
 
 

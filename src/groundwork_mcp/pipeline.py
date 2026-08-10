@@ -1,8 +1,17 @@
-"""Groundwork MCP — async ingestion pipeline (clone → sieve → parse → store)."""
+"""Groundwork MCP — async ingestion pipeline (clone → sieve → parse → store).
+
+Production features:
+  - Global semaphore: max 2 concurrent ingestion jobs
+  - Auto-cleanup: removes clone directory after parse to save disk
+  - All errors captured as failed job state (never crashes the server)
+"""
 
 import asyncio
+import shutil
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
 from .cloner import clone_repo
 from .sieve import sieve_repo
 from .parser import parse_all_files
@@ -11,30 +20,35 @@ from .database import (
     insert_edges, commit_batch,
 )
 
-_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="groundwork")
+# Max 2 simultaneous ingestion jobs — prevents overwhelming CPU/disk/network
+_semaphore = asyncio.Semaphore(2)
+_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="groundwork-ingest")
 
 
 async def run_pipeline(job_id: str, repo_url: str, branch: str | None = None) -> None:
     """
-    Async ingestion pipeline. Runs CPU-bound work in a thread pool
-    so FastMCP's event loop stays responsive.
+    Async ingestion pipeline. Acquires the global semaphore before starting
+    so at most 2 jobs run in parallel. Runs CPU-bound work in a thread pool.
     """
-    loop = asyncio.get_event_loop()
-    await loop.run_in_executor(
-        _executor,
-        _run_pipeline_sync,
-        job_id, repo_url, branch,
-    )
+    async with _semaphore:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(
+            _executor,
+            _run_pipeline_sync,
+            job_id, repo_url, branch,
+        )
 
 
 def _run_pipeline_sync(job_id: str, repo_url: str, branch: str | None) -> None:
     """Synchronous pipeline — runs in thread pool executor."""
     _log(f"[{job_id}] Starting ingestion for {repo_url}")
+    clone_path: str | None = None
 
     try:
         # ── Phase 1: Clone ────────────────────────────────────────────
         update_job(job_id, status="cloning", progress=0.05)
         clone = clone_repo(repo_url, job_id, branch)
+        clone_path = clone.clone_path
         update_job(job_id,
                    commit_sha=clone.commit_sha,
                    clone_path=clone.clone_path,
@@ -87,6 +101,15 @@ def _run_pipeline_sync(job_id: str, repo_url: str, branch: str | None) -> None:
         msg = str(e)
         _log(f"[{job_id}] Failed: {msg}")
         update_job(job_id, status="failed", error_message=msg)
+
+    finally:
+        # Always clean up the clone directory — data is in SQLite now
+        if clone_path and Path(clone_path).exists():
+            try:
+                shutil.rmtree(clone_path)
+                _log(f"[{job_id}] Cleaned up clone dir")
+            except Exception as e:
+                _log(f"[{job_id}] Warning: could not clean clone dir: {e}")
 
 
 def _log(msg: str) -> None:

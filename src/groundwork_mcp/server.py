@@ -1,7 +1,7 @@
 """
 Groundwork MCP Server — FastMCP implementation.
 
-7 tools:
+10 tools:
   ingest_repo          — clone + index a GitHub repo (async, returns job_id)
   get_ingest_status    — poll job progress
   list_ingested_repos  — list all indexed repos
@@ -9,6 +9,9 @@ Groundwork MCP Server — FastMCP implementation.
   query_symbols        — search symbols by name / type / file
   get_import_edges     — get import dependency edges for a file
   get_file_content     — read raw content of any indexed file (README, JSON, source)
+  list_repo_files      — list all indexed files with language, size, line count
+  delete_repo          — permanently remove a repo from the index
+  search_code          — full-text search across all indexed file content
 """
 
 import asyncio
@@ -20,7 +23,8 @@ from fastmcp import FastMCP
 
 from .database import (
     init_database, close_database,
-    create_job, get_job, list_jobs,
+    create_job, get_job, list_jobs, delete_job,
+    search_content,
 )
 from .pipeline import run_pipeline
 from .security import validate_repo_url, extract_repo_name
@@ -393,7 +397,7 @@ def get_file_content(job_id: str, file_path: str) -> str:
 
     # Try exact match first, then partial
     row = db.execute(
-        "SELECT file_path, language, line_count, size_bytes, ast_json "
+        "SELECT file_path, language, line_count, size_bytes, raw_content, ast_json "
         "FROM parsed_files WHERE job_id=? AND file_path=? LIMIT 1",
         (job_id, file_path),
     ).fetchone()
@@ -401,7 +405,7 @@ def get_file_content(job_id: str, file_path: str) -> str:
     if not row:
         # Partial match
         row = db.execute(
-            "SELECT file_path, language, line_count, size_bytes, ast_json "
+            "SELECT file_path, language, line_count, size_bytes, raw_content, ast_json "
             "FROM parsed_files WHERE job_id=? AND file_path LIKE ? LIMIT 1",
             (job_id, f"%{file_path}%"),
         ).fetchone()
@@ -418,7 +422,8 @@ def get_file_content(job_id: str, file_path: str) -> str:
             f"Available files in {job.repo_name}:\n{file_list}"
         )
 
-    content = row["ast_json"]
+    # Prefer raw_content (new index); fall back to ast_json for markdown (old index)
+    content = row["raw_content"] or row["ast_json"]
     lang = row["language"]
     lines = row["line_count"]
     size = row["size_bytes"]
@@ -426,22 +431,139 @@ def get_file_content(job_id: str, file_path: str) -> str:
     if not content:
         return (
             f"File: {row['file_path']} ({lang}, {lines} lines, {size} bytes)\n"
-            f"[No text content stored — this is a binary or unparseable file]"
+            f"[No content stored — re-ingest the repo to populate file content]"
         )
 
-    # For AST-parsed files (code), content is JSON — return a note instead of raw AST
-    if lang in ("javascript", "typescript", "tsx", "python") and content.startswith("{"):
-        return (
-            f"File: {row['file_path']} ({lang}, {lines} lines)\n"
-            f"[AST-indexed file — use query_symbols to find specific symbols in this file]\n"
-            f"Tip: query_symbols(job_id, file_path='{row['file_path']}') to list all symbols."
-        )
-
-    header = f"File: {row['file_path']} ({lang}, {lines} lines)\n{'─'*60}\n"
+    header = f"File: {row['file_path']} ({lang}, {lines} lines)\n" + "-" * 60 + "\n"
     return header + content
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
+# ── Tool 8: list_repo_files ───────────────────────────────────────────────
+
+@mcp.tool()
+def list_repo_files(
+    job_id: str,
+    language: str = "",
+    path_filter: str = "",
+) -> str:
+    """
+    List all files indexed for a repository, with language, size, and line count.
+    Use this to explore what files exist before calling get_file_content.
+    Optionally filter by language (python, typescript, markdown, etc.) or path substring.
+
+    Args:
+        job_id:      The job_id from ingest_repo or list_ingested_repos
+        language:    Filter by language (python | typescript | javascript | markdown | json | yaml | toml)
+        path_filter: Filter to files whose path contains this string
+    """
+    job = get_job(job_id)
+    if not job:
+        return f"Job not found: {job_id}"
+    if job.status != "complete":
+        return f"Job not complete (status: {job.status})"
+
+    from .database import get_db
+    db = get_db()
+
+    conditions = ["job_id = ?"]
+    params: list = [job_id]
+    if language:
+        conditions.append("language = ?")
+        params.append(language)
+    if path_filter:
+        conditions.append("file_path LIKE ?")
+        params.append(f"%{path_filter}%")
+
+    rows = db.execute(
+        f"SELECT file_path, language, line_count, size_bytes "
+        f"FROM parsed_files WHERE {' AND '.join(conditions)} "
+        f"ORDER BY file_path",
+        params,
+    ).fetchall()
+
+    if not rows:
+        return f"No files found matching language={language!r} path={path_filter!r}"
+
+    # Group by directory
+    lines = [f"{len(rows)} files in {job.repo_name}:", ""]
+    current_dir = ""
+    for r in rows:
+        parts = r["file_path"].rsplit("/", 1)
+        dir_part = parts[0] if len(parts) > 1 else "."
+        if dir_part != current_dir:
+            current_dir = dir_part
+            lines.append(f"  {dir_part}/")
+        fname = parts[-1]
+        lines.append(
+            f"    {fname:40}  {r['language']:12}  {r['line_count']:5} lines  {r['size_bytes']//1024 or 1}KB"
+        )
+    return "\n".join(lines)
+
+
+# ── Tool 9: delete_repo ───────────────────────────────────────────────────
+
+@mcp.tool()
+def delete_repo(job_id: str) -> str:
+    """
+    Permanently delete a repository from the local knowledge base.
+    Removes all indexed files, symbols, and edges for this job.
+    Use this to free space or force a clean re-ingest.
+
+    Args:
+        job_id: The job_id from list_ingested_repos
+    """
+    job = get_job(job_id)
+    if not job:
+        return f"Job not found: {job_id}. Use list_ingested_repos() to see all job IDs."
+
+    deleted = delete_job(job_id)
+    if deleted:
+        return (
+            f"Deleted: {job.repo_name} ({job_id})\n"
+            f"All indexed files, symbols, and edges removed.\n"
+            f"Run ingest_repo('{job.repo_url}') to re-index."
+        )
+    return f"Delete failed for {job_id}"
+
+
+# ── Tool 10: search_code ───────────────────────────────────────────────────
+
+@mcp.tool()
+def search_code(job_id: str, query: str, limit: int = 20) -> str:
+    """
+    Full-text search across all indexed file content in a repository.
+    Returns matching lines with file path and line number.
+    Use this to find: config values, string literals, comments, variable names,
+    error messages, or any text that isn't a symbol definition.
+
+    Args:
+        job_id: The job_id from ingest_repo or list_ingested_repos
+        query:  Text to search for (case-insensitive)
+        limit:  Max results to return (default 20, max 100)
+    """
+    job = get_job(job_id)
+    if not job:
+        return f"Job not found: {job_id}"
+    if job.status != "complete":
+        return f"Job not complete (status: {job.status})"
+
+    limit = min(max(1, limit), 100)
+    hits = search_content(job_id, query, limit)
+
+    if not hits:
+        return f"No results for {query!r} in {job.repo_name}"
+
+    lines = [f"{len(hits)} result(s) for {query!r} in {job.repo_name}:", ""]
+    current_file = ""
+    for h in hits:
+        if h["file_path"] != current_file:
+            current_file = h["file_path"]
+            lines.append(f"  {current_file}")
+        lines.append(f"    L{h['line']:4}: {h['snippet']}")
+
+    return "\n".join(lines)
+
+
 
 def main() -> None:
     init_database()
