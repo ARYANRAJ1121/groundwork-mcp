@@ -1,80 +1,79 @@
 # Groundwork MCP
 
-> **MCP server that clones, parses, and builds a citation-grounded knowledge base from any GitHub repository — zero-cost, fully local, no cloud dependencies.**
+<div align="center">
 
-Groundwork lets any MCP-compatible client (Claude Desktop, Cursor, Antigravity, etc.) connect to a GitHub repository and:
+**Reverse-engineer any GitHub repository directly inside your AI assistant.**
 
-- **Clone + analyze** it with AST-grounded parsing (tree-sitter, not raw text guessing)
-- **Extract symbols & dependency edges** (functions, classes, imports) across JS/TS/Python
-- **Build a persistent SQLite knowledge base** per repository that survives across sessions
-- **Return job IDs** immediately — ingestion runs async, you poll for progress
+Clone → Parse → Index → Query. Fully local. Zero cost. No cloud.
+
+[![Python](https://img.shields.io/badge/Python-3.11+-blue?style=flat-square&logo=python)](https://python.org)
+[![FastMCP](https://img.shields.io/badge/FastMCP-3.4+-green?style=flat-square)](https://github.com/jlowin/fastmcp)
+[![License](https://img.shields.io/badge/License-MIT-gray?style=flat-square)](LICENSE)
+
+</div>
 
 ---
 
-## Zero-Cost Stack
+Groundwork is an MCP server that lets Claude (or any MCP-compatible AI) deeply understand a codebase by ingesting it locally — not by searching the web or reading raw text, but by **parsing the actual AST** and building a queryable knowledge base of symbols, imports, and file structure.
 
-| Layer | Choice | Why |
-|-------|--------|-----|
-| Runtime | Node.js / TypeScript | MCP SDK is TypeScript-first |
-| Parsing | `web-tree-sitter` (WASM) | Local AST, no API calls, no native build tools |
-| Database | `sql.js` (WASM SQLite) | Zero `node-gyp`, works on all OSes |
-| Git | `simple-git` | Wraps system `git`, shallow clones |
-| MCP | `@modelcontextprotocol/sdk` | Official SDK |
+Ask Claude:
+- *"What does `rag_agent.py` import?"*
+- *"Where is `DQNPricingAgent` defined and what methods does it have?"*
+- *"Show me the README for this repo."*
+- *"What's the dependency graph between the agent files?"*
 
-No paid services. No cloud. No Docker (yet). Runs entirely on your machine.
+Claude answers from the **local index**, not from hallucination.
+
+---
+
+## How It Works
+
+```
+GitHub Repo URL
+      │
+      ▼
+ git clone --depth 1          ← shallow clone, no history
+      │
+      ▼
+  The Sieve                   ← strips binaries, lock files, node_modules, etc.
+      │
+      ▼
+  tree-sitter Parser           ← AST extraction for JS / TS / Python
+      │                        ← raw text storage for MD / JSON / YAML / TOML
+      ▼
+  SQLite (local)               ← jobs · parsed_files · symbols · edges
+      │
+      ▼
+  7 MCP Tools                  ← Claude queries the index, never guesses
+```
 
 ---
 
 ## Tools
 
-### `ingest_repo(repo_url, branch?)`
+| Tool | What it does |
+|------|-------------|
+| `ingest_repo` | Clone + index a repo. Returns `job_id` immediately, runs in background. |
+| `get_ingest_status` | Poll job progress: `queued → cloning → sieving → parsing → complete` |
+| `list_ingested_repos` | List all indexed repos with job IDs (resume across sessions) |
+| `get_repo_summary` | High-level map: languages, symbol types, most-imported files, external deps |
+| `query_symbols` | Search for functions, classes, types by name / type / file (partial match) |
+| `get_import_edges` | Get import edges for a file — outgoing, incoming, or both |
+| `get_file_content` | Read any indexed file — README, config, source, YAML — full text |
 
-Clone a public GitHub repository and build a knowledge base from it.
+---
 
-- Validates the URL (HTTPS GitHub only)
-- Returns a `job_id` **immediately** — ingestion runs in the background
-- Poll `get_ingest_status` to track progress
+## Supported Languages
 
-```json
-{
-  "job_id": "e9cb40be-48c9-4161-9148-3837384cbdca",
-  "status": "queued",
-  "repo_name": "sindresorhus/is",
-  "message": "Ingestion started. Poll get_ingest_status(...) to track progress."
-}
-```
-
-### `get_ingest_status(job_id)`
-
-Check the live status and progress of an ingestion job.
-
-```json
-{
-  "job_id": "e9cb40be-...",
-  "repo_name": "sindresorhus/is",
-  "status": "complete",
-  "progress_pct": 100,
-  "files_processed": 11,
-  "files_total": 11,
-  "tokens_estimate": 66367,
-  "commit_sha": "7821031c..."
-}
-```
-
-Status values: `queued` → `cloning` → `sieving` → `parsing` → `complete` | `failed`
-
-### `list_ingested_repos()`
-
-List all repositories ingested in the current knowledge base. Useful for resuming sessions.
-
-```json
-{
-  "total": 3,
-  "complete": 2,
-  "in_progress": 1,
-  "repos": [...]
-}
-```
+| Language | Extensions | Symbols | Edges | File Content |
+|----------|-----------|---------|-------|-------------|
+| TypeScript | `.ts`, `.tsx` | ✅ | ✅ | — |
+| JavaScript | `.js`, `.mjs`, `.cjs` | ✅ | ✅ | — |
+| Python | `.py` | ✅ | ✅ | — |
+| Markdown | `.md`, `.mdx` | — | — | ✅ |
+| JSON | `.json` | — | — | ✅ |
+| YAML | `.yaml`, `.yml` | — | — | ✅ |
+| TOML | `.toml` | — | — | ✅ |
 
 ---
 
@@ -82,168 +81,134 @@ List all repositories ingested in the current knowledge base. Useful for resumin
 
 ### Prerequisites
 
-- **Node.js** ≥ 18 (`node --version`)
-- **git** on your PATH (`git --version`)
+- **Python 3.11+**
+- **uv** — [install](https://docs.astral.sh/uv/getting-started/installation/)
+- **git** on your PATH
 
 ### Setup
 
 ```bash
-# 1. Clone the repo
+# 1. Clone
 git clone https://github.com/ARYANRAJ1121/groundwork-mcp.git
 cd groundwork-mcp
 
-# 2. Install dependencies (no native build tools needed)
-npm install
+# 2. Install dependencies
+uv sync
 
-# 3. Download WASM grammar files
-npx tsx scripts/download-grammars.ts
-
-# 4. Build
-npm run build
-
-# 5. Verify it starts
-node build/index.js
-# You should see: [INFO] Groundwork MCP Server running on stdio
-# Press Ctrl+C to stop
+# 3. Verify
+uv run groundwork-mcp --help
 ```
 
 ---
 
-## MCP Client Configuration
+## Claude Desktop Configuration
 
-### Claude Desktop
+Edit your Claude Desktop config:
 
-Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or  
-`%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+**Windows:** `%APPDATA%\Claude\claude_desktop_config.json`  
+**macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
 
 ```json
 {
   "mcpServers": {
     "groundwork": {
-      "command": "node",
-      "args": ["C:/absolute/path/to/groundwork-mcp/build/index.js"]
+      "command": "uv",
+      "args": [
+        "run",
+        "--project",
+        "C:\\path\\to\\groundwork-mcp",
+        "groundwork-mcp"
+      ]
     }
   }
 }
 ```
 
-Restart Claude Desktop after saving. You should see Groundwork in the tools panel.
-
-### Antigravity IDE
-
-Add to your MCP server configuration:
-
-```json
-{
-  "name": "groundwork",
-  "command": "node",
-  "args": ["C:/absolute/path/to/groundwork-mcp/build/index.js"]
-}
-```
-
-### Cursor / Other MCP Clients
-
-Any client that supports the MCP stdio transport will work. Point `command` to `node` and `args` to the absolute path of `build/index.js`.
+Restart Claude Desktop. Groundwork will appear under **Connectors → Desktop → Local dev**.
 
 ---
 
 ## Usage
 
-Once connected, talk to your AI client naturally:
-
 ```
-You: Ingest https://github.com/fastapi/fastapi for me
+You:    Ingest https://github.com/ARYANRAJ1121/ECHO
 
-Claude: [calls ingest_repo] Job started: abc-123. Let me check progress...
-        [calls get_ingest_status] Status: parsing (47/89 files, 34%)...
-        [calls get_ingest_status] Complete! 89 files, 312K tokens indexed.
+Claude: [ingest_repo] Job started: abc-123. Polling...
+        [get_ingest_status] Parsing 28/34 files (82%)...
+        [get_ingest_status] Complete — 34 files, ~74K tokens. Commit df87f2d7.
 
-        FastAPI has been ingested. I can now answer questions about:
-        - File structure and module organization
-        - Function signatures and class hierarchies
-        - Import dependencies and dependency graph
-        - Specific symbols and where they're defined
+You:    What is this project about?
+
+Claude: [get_file_content → README.md] ...reads actual README...
+        ECHO is a multi-agent pricing simulation that...
+
+You:    Where is DQNPricingAgent defined?
+
+Claude: [query_symbols → name=DQNPricingAgent]
+        [class] DQNPricingAgent @ agents/dqn_agent.py:12–187
+
+You:    What does dqn_agent.py import?
+
+Claude: [get_import_edges → dqn_agent.py, outgoing]
+        agents/dqn_agent.py → <external: numpy>
+        agents/dqn_agent.py → <external: torch>
+        agents/dqn_agent.py → market/engine.py
 ```
 
 ---
 
 ## Data Storage
 
-By default, Groundwork stores data at:
-
 ```
 ~/.groundwork/
-  groundwork.db      # SQLite database (jobs, files, symbols, edges)
-  repos/             # Temporary clone directories (cleaned after ingestion)
+  groundwork.db      # SQLite — jobs, files, symbols, edges
+  repos/             # Temporary clone dirs (auto-cleaned after parse)
 ```
 
-Override with environment variables:
+Override with `GROUNDWORK_DATA_DIR=/custom/path`.
 
-```bash
-GROUNDWORK_DATA_DIR=/custom/path node build/index.js
-```
-
-### SQLite Schema
+### Schema
 
 | Table | Contains |
 |-------|---------|
-| `jobs` | Job status, progress, metadata per repo |
-| `parsed_files` | Every parsed source file with AST JSON |
-| `symbols` | Functions, classes, types extracted per file |
+| `jobs` | One row per repo — status, progress, commit SHA |
+| `parsed_files` | Every indexed file — language, line count, content/AST |
+| `symbols` | Functions, classes, types, variables — with file + line |
 | `edges` | Import/dependency edges between files |
 
 ---
 
 ## Security
 
-- **HTTPS only** — SSH and non-GitHub URLs are rejected
-- **Shallow clones** — `--depth 1`, never fetches full history
-- **File caps** — max 10,000 files and 500MB per repo (configurable)
-- **Binary detection** — images, executables, and lock files are skipped
-- **Sandboxed** — clones go into an isolated per-job directory
+- **HTTPS GitHub only** — SSH and non-GitHub URLs rejected
+- **Shallow clone** — `--depth 1`, never fetches history
+- **File limits** — max 10K files, 500MB per repo (configurable)
+- **Binary detection** — skips images, executables, lock files
+- **No credentials stored** — public repos only
 
 ---
 
-## Supported Languages
+## Stack
 
-| Language | Extension(s) | Symbols | Edges |
-|----------|-------------|---------|-------|
-| TypeScript | `.ts` | ✅ | ✅ |
-| TypeScript JSX | `.tsx` | ✅ | ✅ |
-| JavaScript | `.js`, `.mjs`, `.cjs` | ✅ | ✅ |
-| Python | `.py` | ✅ | ✅ |
-| JSON | `.json` | — | — |
-| Markdown | `.md` | — | — |
-| YAML | `.yaml`, `.yml` | — | — |
-| TOML | `.toml` | — | — |
-
----
-
-## Development
-
-```bash
-# Type-check without building
-npx tsc --noEmit
-
-# Run integration test against a real repo
-npx tsx scripts/test-ingest.ts
-
-# Copy WASM grammars (after npm install)
-npx tsx scripts/download-grammars.ts
-```
+| Layer | Library | Why |
+|-------|---------|-----|
+| MCP | `fastmcp` | Cleanest Python MCP framework |
+| Parsing | `tree-sitter` (native) | AST, not regex — no WASM, no compilation |
+| Database | `sqlite3` (built-in) | Zero dependencies, WAL mode |
+| Git | `subprocess` + system git | Reliable timeout on all platforms |
 
 ---
 
 ## Roadmap
 
-- [ ] **v0.2** — `query_repo` tool: semantic search over parsed symbols
-- [ ] **v0.2** — `get_file` tool: return file content with symbol annotations
-- [ ] **v0.3** — Build-prompt roadmap generation (reconstruct project from scratch)
-- [ ] **v0.3** — LanceDB vector embeddings for semantic similarity search
-- [ ] **v1.0** — Docker packaging for fully isolated execution
+- [ ] `search_code` — full-text search across all file contents
+- [ ] `get_call_graph` — trace function calls across files
+- [ ] Support for Go, Rust, Java grammars
+- [ ] Private repo support (via personal access token)
+- [ ] Re-ingest on new commit detection
 
 ---
 
 ## License
 
-MIT — see [LICENSE](LICENSE)
+MIT — [LICENSE](LICENSE)
