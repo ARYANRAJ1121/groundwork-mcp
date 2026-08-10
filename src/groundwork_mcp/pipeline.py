@@ -7,6 +7,7 @@ Production features:
 """
 
 import asyncio
+import os
 import shutil
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -106,10 +107,22 @@ def _run_pipeline_sync(job_id: str, repo_url: str, branch: str | None) -> None:
         # Always clean up the clone directory — data is in SQLite now
         if clone_path and Path(clone_path).exists():
             try:
-                shutil.rmtree(clone_path)
+                _rmtree(Path(clone_path))
                 _log(f"[{job_id}] Cleaned up clone dir")
             except Exception as e:
                 _log(f"[{job_id}] Warning: could not clean clone dir: {e}")
+
+
+def _rmtree(path: Path) -> None:
+    """Windows-safe rmtree — handles git's read-only files."""
+    import stat
+    def _on_error(func, fpath, exc_info):
+        try:
+            os.chmod(fpath, stat.S_IWRITE)
+            func(fpath)
+        except Exception:
+            pass
+    shutil.rmtree(str(path), onerror=_on_error)
 
 
 def _log(msg: str) -> None:

@@ -66,10 +66,28 @@ async def ingest_repo(repo_url: str, branch: str = "") -> str:
     if not valid:
         return f"Error: {error}\nHint: URL must be https://github.com/<owner>/<repo>"
 
-    job_id = str(uuid.uuid4())
     repo_name = extract_repo_name(repo_url)
     branch_val = branch.strip() or None
 
+    # Check for an existing complete job for this URL
+    existing = [
+        j for j in list_jobs()
+        if j.repo_url.rstrip("/") == repo_url.rstrip("/")
+        and j.status == "complete"
+        and (branch_val is None or j.branch == branch_val)
+    ]
+    if existing:
+        j = existing[0]
+        return (
+            f"Already ingested: {repo_name}\n"
+            f"  job_id:  {j.id}\n"
+            f"  commit:  {(j.commit_sha or 'unknown')[:8]}\n"
+            f"  files:   {j.files_processed}  (~{j.tokens_estimate:,} tokens)\n"
+            f"  date:    {j.created_at[:10]}\n\n"
+            f"Use the existing job_id above, or call delete_repo('{j.id}') first to force a re-ingest."
+        )
+
+    job_id = str(uuid.uuid4())
     create_job(job_id, repo_url, repo_name, branch_val or "default")
 
     # Fire-and-forget — do not await

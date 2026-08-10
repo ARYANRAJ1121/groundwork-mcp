@@ -2,8 +2,10 @@
 
 import os
 import shutil
+import stat
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from . import config
@@ -55,7 +57,7 @@ def clone_repo(repo_url: str, job_id: str, branch: str | None = None) -> CloneRe
         if attempt > 1:
             wait = 2 ** (attempt - 2)  # 1s, 2s
             _log(f"Retry {attempt}/{max_attempts} in {wait}s...")
-            import time; time.sleep(wait)
+            time.sleep(wait)
 
         try:
             result = subprocess.run(
@@ -68,7 +70,7 @@ def clone_repo(repo_url: str, job_id: str, branch: str | None = None) -> CloneRe
             )
         except subprocess.TimeoutExpired:
             if clone_path.exists():
-                shutil.rmtree(clone_path)
+                _rmtree(clone_path)
             raise TimeoutError(
                 f"Clone timed out after {config.CLONE_TIMEOUT_SECONDS}s. "
                 "Repository may be too large or network is slow."
@@ -85,7 +87,7 @@ def clone_repo(repo_url: str, job_id: str, branch: str | None = None) -> CloneRe
         # Non-retryable: repo not found, bad URL
         if "not found" in stderr or "does not exist" in stderr or "repository" in stderr:
             if clone_path.exists():
-                shutil.rmtree(clone_path)
+                _rmtree(clone_path)
             raise ValueError(
                 f"Repository not found: {repo_url}. "
                 "Ensure the URL is correct and the repo is public."
@@ -94,7 +96,7 @@ def clone_repo(repo_url: str, job_id: str, branch: str | None = None) -> CloneRe
         last_error = RuntimeError(f"Clone failed (exit {result.returncode}): {result.stderr.strip()}")
         _log(f"Attempt {attempt} failed: {result.stderr.strip()[:100]}")
         if clone_path.exists():
-            shutil.rmtree(clone_path)
+            _rmtree(clone_path)
     else:
         raise last_error
 
@@ -120,8 +122,24 @@ def remove_clone(job_id: str) -> None:
     """Remove a cloned repository from disk."""
     clone_path = config.REPOS_DIR / job_id
     if clone_path.exists():
-        shutil.rmtree(clone_path)
+        _rmtree(clone_path)
         _log(f"Removed clone: {clone_path}")
+
+
+def _rmtree(path: Path) -> None:
+    """
+    Cross-platform rmtree that handles Windows read-only files.
+    Git marks some objects as read-only; shutil.rmtree fails without this.
+    """
+    def _on_error(func, path, exc_info):
+        # Make read-only files writable and retry
+        try:
+            os.chmod(path, stat.S_IWRITE)
+            func(path)
+        except Exception:
+            pass  # Best effort
+
+    shutil.rmtree(str(path), onerror=_on_error)
 
 
 def _log(msg: str) -> None:

@@ -200,13 +200,18 @@ def _node_to_symbol(node: Node, file_path: str, lang: str, source: bytes) -> Opt
             return _make_symbol(file_path, name or "<anonymous>", "class", node, source)
 
         if t == "assignment":
-            # Top-level variable assignment
-            for child in node.children:
-                if child.type == "identifier":
-                    name_text = child.text
-                    if isinstance(name_text, bytes):
-                        name_text = name_text.decode("utf-8", errors="replace")
-                    return _make_symbol(file_path, name_text, "variable", node)
+            # Only capture module-level assignments (parent is the module root)
+            # Skip assignments inside functions/classes to avoid noise
+            parent = node.parent
+            if parent is not None and parent.type == "module":
+                for child in node.children:
+                    if child.type == "identifier":
+                        name_text = child.text
+                        if isinstance(name_text, bytes):
+                            name_text = name_text.decode("utf-8", errors="replace")
+                        # Skip private/dunder vars — too noisy
+                        if not name_text.startswith("__"):
+                            return _make_symbol(file_path, name_text, "variable", node, source)
 
     return None
 
