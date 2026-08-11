@@ -27,7 +27,7 @@ def clone_repo(repo_url: str, job_id: str, branch: str | None = None) -> CloneRe
 
     # Remove any stale clone
     if clone_path.exists():
-        shutil.rmtree(clone_path)
+        _rmtree(clone_path)
 
     _log(f"Cloning {repo_url} (branch: {branch or 'default'}) → {clone_path}")
 

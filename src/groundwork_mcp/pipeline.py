@@ -18,7 +18,7 @@ from .sieve import sieve_repo
 from .parser import parse_all_files
 from .database import (
     update_job, insert_parsed_file, insert_symbols,
-    insert_edges, commit_batch,
+    insert_edges, insert_calls, commit_batch,
 )
 
 # Max 2 simultaneous ingestion jobs — prevents overwhelming CPU/disk/network
@@ -87,6 +87,8 @@ def _run_pipeline_sync(job_id: str, repo_url: str, branch: str | None) -> None:
                 insert_symbols(job_id, r.symbols)
             if r.edges:
                 insert_edges(job_id, r.edges)
+            if r.calls:
+                insert_calls(job_id, r.calls)
 
         commit_batch()
 

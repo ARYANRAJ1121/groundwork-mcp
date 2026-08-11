@@ -5,7 +5,7 @@ import sys
 from datetime import datetime, timezone
 from typing import Optional
 from . import config
-from .types import IngestJob, ParsedFile, SymbolRecord, EdgeRecord
+from .types import IngestJob, ParsedFile, SymbolRecord, EdgeRecord, CallRecord
 
 # ── Connection ────────────────────────────────────────────────────────────────
 
@@ -114,6 +114,20 @@ CREATE INDEX IF NOT EXISTS idx_edges_source  ON edges(job_id, source_file);
 CREATE INDEX IF NOT EXISTS idx_edges_target  ON edges(job_id, target_file);
 CREATE INDEX IF NOT EXISTS idx_files_job     ON parsed_files(job_id);
 CREATE INDEX IF NOT EXISTS idx_files_lang    ON parsed_files(job_id, language);
+
+CREATE TABLE IF NOT EXISTS calls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    caller_file TEXT NOT NULL,
+    caller_function TEXT NOT NULL,
+    callee_name TEXT NOT NULL,
+    line INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_calls_job    ON calls(job_id);
+CREATE INDEX IF NOT EXISTS idx_calls_callee ON calls(job_id, callee_name);
+CREATE INDEX IF NOT EXISTS idx_calls_caller ON calls(job_id, caller_function);
 """
 
 
@@ -128,6 +142,27 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if "raw_content" not in columns:
         conn.execute("ALTER TABLE parsed_files ADD COLUMN raw_content TEXT")
         _log("Migration: added parsed_files.raw_content")
+
+    # Add calls table if it doesn't exist
+    tables = {
+        row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    if "calls" not in tables:
+        conn.executescript("""
+            CREATE TABLE calls (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                caller_file TEXT NOT NULL,
+                caller_function TEXT NOT NULL,
+                callee_name TEXT NOT NULL,
+                line INTEGER NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX idx_calls_job    ON calls(job_id);
+            CREATE INDEX idx_calls_callee ON calls(job_id, callee_name);
+            CREATE INDEX idx_calls_caller ON calls(job_id, caller_function);
+        """)
+        _log("Migration: created calls table")
 
 
 # ── Job CRUD ──────────────────────────────────────────────────────────────────
@@ -267,3 +302,51 @@ def search_content(
                 if len(results) >= limit:
                     return results
     return results
+
+
+# ── Call Graph ────────────────────────────────────────────────────────────────
+
+def insert_calls(job_id: str, calls: list[CallRecord]) -> None:
+    """Bulk insert call records for a file."""
+    if not calls:
+        return
+    now = _now()
+    get_db().executemany(
+        """INSERT INTO calls
+           (job_id, caller_file, caller_function, callee_name, line, created_at)
+           VALUES (?,?,?,?,?,?)""",
+        [(job_id, c.caller_file, c.caller_function, c.callee_name, c.line, now)
+         for c in calls],
+    )
+
+
+def get_callers(job_id: str, function_name: str, limit: int = 50) -> list[dict]:
+    """
+    Find all call sites that call `function_name`.
+    Returns: [{caller_file, caller_function, callee_name, line}]
+    """
+    rows = get_db().execute(
+        """SELECT caller_file, caller_function, callee_name, line
+           FROM calls
+           WHERE job_id = ? AND callee_name = ?
+           ORDER BY caller_file, line
+           LIMIT ?""",
+        (job_id, function_name, limit),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_callees(job_id: str, function_name: str, limit: int = 50) -> list[dict]:
+    """
+    Find all functions called by `function_name`.
+    Returns: [{caller_file, caller_function, callee_name, line}]
+    """
+    rows = get_db().execute(
+        """SELECT caller_file, caller_function, callee_name, line
+           FROM calls
+           WHERE job_id = ? AND caller_function = ?
+           ORDER BY line
+           LIMIT ?""",
+        (job_id, function_name, limit),
+    ).fetchall()
+    return [dict(r) for r in rows]

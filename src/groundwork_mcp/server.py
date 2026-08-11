@@ -1,7 +1,7 @@
 """
 Groundwork MCP Server — FastMCP implementation.
 
-10 tools:
+11 tools:
   ingest_repo          — clone + index a GitHub repo (async, returns job_id)
   get_ingest_status    — poll job progress
   list_ingested_repos  — list all indexed repos
@@ -12,6 +12,7 @@ Groundwork MCP Server — FastMCP implementation.
   list_repo_files      — list all indexed files with language, size, line count
   delete_repo          — permanently remove a repo from the index
   search_code          — full-text search across all indexed file content
+  get_call_graph       — trace who calls a function and what it calls
 """
 
 import asyncio
@@ -24,7 +25,7 @@ from fastmcp import FastMCP
 from .database import (
     init_database, close_database,
     create_job, get_job, list_jobs, delete_job,
-    search_content,
+    search_content, get_callers, get_callees,
 )
 from .pipeline import run_pipeline
 from .security import validate_repo_url, extract_repo_name
@@ -581,6 +582,86 @@ def search_code(job_id: str, query: str, limit: int = 20) -> str:
 
     return "\n".join(lines)
 
+
+# ── Tool 11: get_call_graph ───────────────────────────────────────────────────
+
+@mcp.tool()
+def get_call_graph(
+    job_id: str,
+    function_name: str,
+    direction: str = "both",
+) -> str:
+    """
+    Trace the call graph for a function — who calls it, and what it calls.
+
+    Use this to understand:
+      - Where is this function used? (callers)
+      - What does this function depend on? (callees)
+      - How does execution flow through the codebase?
+
+    Works for Python, JavaScript, TypeScript, and TSX files.
+    NOTE: re-ingest the repo after upgrading to v0.4 to populate the calls index.
+
+    Args:
+        job_id:        The job_id from ingest_repo or list_ingested_repos
+        function_name: Exact function or method name to look up
+        direction:     "callers"  — who calls this function?
+                       "callees"  — what does this function call?
+                       "both"     — full picture (default)
+    """
+    job = get_job(job_id)
+    if not job:
+        return f"Job not found: {job_id}"
+    if job.status != "complete":
+        return f"Job not complete (status: {job.status})"
+
+    direction = direction.lower().strip()
+    if direction not in ("callers", "callees", "both"):
+        return "direction must be 'callers', 'callees', or 'both'"
+
+    output: list[str] = [f"Call graph for '{function_name}' in {job.repo_name}:", ""]
+
+    # ── Who calls this function? ──────────────────────────────────────────────
+    if direction in ("callers", "both"):
+        callers = get_callers(job_id, function_name)
+        if callers:
+            output.append(f"  CALLERS — {len(callers)} call site(s) invoke '{function_name}':")
+            current_file = ""
+            for c in callers:
+                if c["caller_file"] != current_file:
+                    current_file = c["caller_file"]
+                    output.append(f"    {current_file}")
+                output.append(
+                    f"      L{c['line']:4}  inside {c['caller_function']}()"
+                )
+        else:
+            output.append(f"  CALLERS — no indexed call sites found for '{function_name}'")
+            output.append( "            (this may mean it's called dynamically, or re-ingest is needed)")
+        output.append("")
+
+    # ── What does this function call? ─────────────────────────────────────────
+    if direction in ("callees", "both"):
+        callees = get_callees(job_id, function_name)
+        if callees:
+            # Deduplicate by callee name, keeping first occurrence
+            seen: set[str] = set()
+            unique: list[dict] = []
+            for c in callees:
+                if c["callee_name"] not in seen:
+                    seen.add(c["callee_name"])
+                    unique.append(c)
+
+            output.append(f"  CALLEES — '{function_name}' calls {len(unique)} distinct function(s):")
+            for c in callees:
+                output.append(
+                    f"    L{c['line']:4}  → {c['callee_name']}()"
+                )
+        else:
+            output.append(f"  CALLEES — no outgoing calls indexed for '{function_name}'")
+            output.append( "            (anonymous function, or body is empty / uses builtins only)")
+        output.append("")
+
+    return "\n".join(output)
 
 
 def main() -> None:

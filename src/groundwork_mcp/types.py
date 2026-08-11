@@ -86,10 +86,20 @@ class EdgeRecord:
 
 
 @dataclass
+class CallRecord:
+    """A function/method call detected in source code."""
+    caller_file: str
+    caller_function: str   # function that contains the call ('<module>' if top-level)
+    callee_name: str       # name of the called function/method
+    line: int              # line number of the call
+
+
+@dataclass
 class FileParseResult:
     file: ParsedFile
     symbols: list[SymbolRecord] = field(default_factory=list)
     edges: list[EdgeRecord] = field(default_factory=list)
+    calls: list[CallRecord] = field(default_factory=list)
 
 
 @dataclass
