@@ -1,7 +1,8 @@
 """
 Groundwork MCP Server — FastMCP implementation.
 
-11 tools:
+12 tools:
+  route_query          — Laya-powered smart router: classify a query and recommend the best tool
   ingest_repo          — clone + index a GitHub repo (async, returns job_id)
   get_ingest_status    — poll job progress
   list_ingested_repos  — list all indexed repos
@@ -29,6 +30,7 @@ from .database import (
 )
 from .pipeline import run_pipeline
 from .security import validate_repo_url, extract_repo_name
+from .router import route_query as _route_query
 
 # ── Server ────────────────────────────────────────────────────────────────────
 
@@ -39,12 +41,13 @@ mcp = FastMCP(
         "IMPORTANT RULES:\n"
         "1. NEVER answer questions about an ingested repo from memory or training data. "
         "Always use the Groundwork tools to retrieve facts from the local index.\n"
-        "2. When asked 'what is this project about?' — call get_file_content(job_id, 'README.md') first.\n"
-        "3. When asked about code structure — call get_repo_summary(job_id) first.\n"
-        "4. When asked where a symbol is defined — call query_symbols(job_id, name=...).\n"
-        "5. When asked about imports or dependencies — call get_import_edges(job_id, file_path=...).\n"
-        "Workflow: ingest_repo → get_ingest_status (poll until complete) → "
-        "get_file_content / get_repo_summary / query_symbols / get_import_edges."
+        "2. If unsure which tool to call, use route_query(query) FIRST — it uses Laya "
+        "to classify your query in ~33ms and recommends the best tool + arguments.\n"
+        "3. When asked 'what is this project about?' — call get_file_content(job_id, 'README.md') first.\n"
+        "4. When asked about code structure — call get_repo_summary(job_id) first.\n"
+        "5. When asked where a symbol is defined — call query_symbols(job_id, name=...).\n"
+        "6. When asked about imports or dependencies — call get_import_edges(job_id, file_path=...).\n"
+        "Workflow: route_query → (recommended tool) or ingest_repo → get_ingest_status → explore."
     ),
 )
 
@@ -662,6 +665,65 @@ def get_call_graph(
         output.append("")
 
     return "\n".join(output)
+
+
+# ── Tool 12: route_query ──────────────────────────────────────────────────────
+
+@mcp.tool()
+def route_query(query: str) -> str:
+    """
+    Smart query router powered by Laya — a non-autoregressive decision engine.
+
+    Call this FIRST when you're unsure which Groundwork tool to use.
+    It classifies your natural-language query in ~33ms and returns:
+      - The recommended tool name
+      - Confidence score
+      - Whether a job_id is needed
+      - Suggested next steps
+
+    Works entirely locally with no API key. Falls back to keyword matching
+    if the laya package is not installed.
+
+    Args:
+        query: The user's natural-language question about a repository
+    """
+    result = _route_query(query)
+
+    lines = [
+        f"Recommended tool:  {result['recommended_tool']}",
+        f"Confidence:        {result['confidence']:.0%}" if isinstance(result['confidence'], float) else f"Confidence:        {result['confidence']}",
+        f"Complexity:        {result['complexity']}",
+        f"Needs job_id:      {'yes' if result['needs_job_id'] else 'no'}",
+        f"About a file:      {'yes' if result['is_about_specific_file'] else 'no'}",
+        f"Method:            {result['method']}",
+        "",
+    ]
+
+    # Add reasoning
+    if result.get("reasoning"):
+        lines.append(f"Reasoning: {result['reasoning']}")
+        lines.append("")
+
+    # Add usage hints
+    tool = result["recommended_tool"]
+    if result["needs_job_id"]:
+        lines.append(
+            f"Next step: Call {tool}(job_id=...) — "
+            f"use list_ingested_repos() to find available job IDs."
+        )
+    elif tool == "ingest_repo":
+        lines.append(
+            f"Next step: Call ingest_repo(repo_url='https://github.com/owner/repo')"
+        )
+    elif tool == "list_ingested_repos":
+        lines.append(f"Next step: Call list_ingested_repos()")
+    else:
+        lines.append(f"Next step: Call {tool}(...)")
+
+    if result.get("laya_error"):
+        lines.append(f"\nNote: Laya unavailable ({result['laya_error']}), used keyword fallback.")
+
+    return "\n".join(lines)
 
 
 def main() -> None:
