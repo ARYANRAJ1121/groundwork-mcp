@@ -29,8 +29,10 @@ def _get_router():
     if _laya_router is None:
         try:
             from laya import Router
-            _laya_router = Router()          # lazy load; downloads checkpoint on first predict()
-            logger.info("Laya Router initialised (lazy mode)")
+            # OPTIMIZATION: preload=True keeps the checkpoints hot in memory 
+            # for instant ~33ms routing, rather than loading on the fly.
+            _laya_router = Router(preload=True)
+            logger.info("Laya Router initialised (preloaded)")
         except ImportError:
             logger.warning(
                 "laya is not installed. "
@@ -43,8 +45,8 @@ def _get_router():
 
 TOOL_CRITERIA: dict[str, str] = {
     "ingest_repo": (
-        "User wants to index, clone, ingest, or add a new GitHub repository. "
-        "Keywords: ingest, clone, index, add repo, scan repo."
+        "User provides a GitHub URL and wants to clone, ingest, download, or index "
+        "a new repository."
     ),
     "get_ingest_status": (
         "User wants to check the progress or status of an ongoing ingestion job. "
@@ -60,9 +62,8 @@ TOOL_CRITERIA: dict[str, str] = {
         "Keywords: summary, overview, what is this project, architecture, structure."
     ),
     "query_symbols": (
-        "User wants to find where a function, class, type, variable, or symbol "
-        "is defined. Keywords: where is, find function, list classes, symbol lookup, "
-        "definition, declaration."
+        "User asks where a specific function, class, variable, or symbol is defined "
+        "or declared in the code. Keywords: where is <name> defined, find function."
     ),
     "get_import_edges": (
         "User wants to see import/dependency relationships between files. "

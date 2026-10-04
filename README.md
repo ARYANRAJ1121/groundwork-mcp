@@ -8,6 +8,7 @@ Clone → Parse → Index → Query. Fully local. Zero cost. No cloud.
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue?style=flat-square&logo=python)](https://python.org)
 [![FastMCP](https://img.shields.io/badge/FastMCP-3.4+-green?style=flat-square)](https://github.com/jlowin/fastmcp)
+[![Laya](https://img.shields.io/badge/Router-Laya-purple?style=flat-square)](https://github.com/NandhaKishorM/laya)
 [![SQLite](https://img.shields.io/badge/Database-SQLite-orange?style=flat-square)](https://sqlite.org)
 [![License](https://img.shields.io/badge/License-MIT-gray?style=flat-square)](LICENSE)
 
@@ -59,16 +60,18 @@ GitHub Repo URL
 
 | # | Tool | What it does |
 |---|------|-------------|
-| 1 | `ingest_repo` | Clone + index a repo. Returns `job_id` immediately, runs in background. |
-| 2 | `get_ingest_status` | Poll job progress: `queued → cloning → sieving → parsing → complete` |
-| 3 | `list_ingested_repos` | List all indexed repos with job IDs — resume across sessions |
-| 4 | `get_repo_summary` | High-level map: languages, symbol counts, most-imported files, external deps |
-| 5 | `query_symbols` | Search functions, classes, types by name / type / file — returns real signatures |
-| 6 | `get_import_edges` | Import graph for a file — outgoing, incoming, or both |
-| 7 | `get_file_content` | Read any indexed file — README, Python source, config, YAML — full text |
-| 8 | `list_repo_files` | Directory-grouped file listing with language, size, line count |
-| 9 | `delete_repo` | Permanently remove a repo and all its data from the index |
-| 10 | `search_code` | Full-text search across all indexed file content — finds strings, comments, values |
+| 1 | `route_query` | Smart intent router using Laya to classify natural language queries and recommend the best tool. |
+| 2 | `ingest_repo` | Clone + index a repo. Returns `job_id` immediately, runs in background. |
+| 3 | `get_ingest_status` | Poll job progress: `queued → cloning → sieving → parsing → complete` |
+| 4 | `list_ingested_repos` | List all indexed repos with job IDs — resume across sessions |
+| 5 | `get_repo_summary` | High-level map: languages, symbol counts, most-imported files, external deps |
+| 6 | `query_symbols` | Search functions, classes, types by name / type / file — returns real signatures |
+| 7 | `get_import_edges` | Import graph for a file — outgoing, incoming, or both |
+| 8 | `get_file_content` | Read any indexed file — README, Python source, config, YAML — full text |
+| 9 | `list_repo_files` | Directory-grouped file listing with language, size, line count |
+| 10 | `delete_repo` | Permanently remove a repo and all its data from the index |
+| 11 | `search_code` | Full-text search across all indexed file content — finds strings, comments, values |
+| 12 | `get_call_graph` | Trace who calls a function and what a function calls |
 
 ---
 
@@ -103,8 +106,8 @@ All source files store **raw UTF-8 content** (up to 500KB per file), so `get_fil
 git clone https://github.com/ARYANRAJ1121/groundwork-mcp.git
 cd groundwork-mcp
 
-# 2. Install dependencies
-uv sync
+# 2. Install dependencies (include router for Laya)
+uv sync --extra router
 
 # 3. Verify
 uv run python -c "from groundwork_mcp.server import mcp; print('OK')"
@@ -244,6 +247,7 @@ Control behaviour via environment variables:
 | Layer | Library | Why |
 |-------|---------|-----|
 | MCP | `fastmcp` | Cleanest Python MCP framework — `@mcp.tool()` decorators |
+| Routing | `laya` | Non-autoregressive decision engine — instantly routes natural language to tools (~33ms) |
 | Parsing | `tree-sitter` (native Python) | Real AST — no WASM, no compilation, no regex hacks |
 | Database | `sqlite3` (built-in) | Zero extra deps — WAL mode, migrations, cascade deletes |
 | Git | `subprocess` + system git | Native timeout support on all platforms including Windows |
