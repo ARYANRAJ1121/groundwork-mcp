@@ -17,6 +17,7 @@ env/
 # Runtime data
 .groundwork/
 data/
+benchmark-results.json
 
 # Environment
 .env

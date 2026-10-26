@@ -7,6 +7,7 @@ Production features:
 """
 
 import asyncio
+import hashlib
 import os
 import shutil
 import sys
@@ -19,6 +20,7 @@ from .parser import parse_all_files
 from .database import (
     update_job, insert_parsed_file, insert_symbols,
     insert_edges, insert_calls, commit_batch,
+    copy_unchanged_files, token_estimate,
 )
 
 # Max 2 simultaneous ingestion jobs — prevents overwhelming CPU/disk/network
@@ -26,7 +28,7 @@ _semaphore = asyncio.Semaphore(2)
 _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="groundwork-ingest")
 
 
-async def run_pipeline(job_id: str, repo_url: str, branch: str | None = None) -> None:
+async def run_pipeline(job_id: str, repo_url: str, branch: str | None = None, incremental_from: str | None = None, local_path: str | None = None) -> None:
     """
     Async ingestion pipeline. Acquires the global semaphore before starting
     so at most 2 jobs run in parallel. Runs CPU-bound work in a thread pool.
@@ -36,11 +38,11 @@ async def run_pipeline(job_id: str, repo_url: str, branch: str | None = None) ->
         await loop.run_in_executor(
             _executor,
             _run_pipeline_sync,
-            job_id, repo_url, branch,
+            job_id, repo_url, branch, incremental_from, local_path,
         )
 
 
-def _run_pipeline_sync(job_id: str, repo_url: str, branch: str | None) -> None:
+def _run_pipeline_sync(job_id: str, repo_url: str, branch: str | None, incremental_from: str | None = None, local_path: str | None = None) -> None:
     """Synchronous pipeline — runs in thread pool executor."""
     _log(f"[{job_id}] Starting ingestion for {repo_url}")
     clone_path: str | None = None
@@ -48,17 +50,23 @@ def _run_pipeline_sync(job_id: str, repo_url: str, branch: str | None) -> None:
     try:
         # ── Phase 1: Clone ────────────────────────────────────────────
         update_job(job_id, status="cloning", progress=0.05)
-        clone = clone_repo(repo_url, job_id, branch)
-        clone_path = clone.clone_path
-        update_job(job_id,
-                   commit_sha=clone.commit_sha,
-                   clone_path=clone.clone_path,
-                   progress=0.2)
-        _log(f"[{job_id}] Clone done @ {clone.commit_sha[:8]}")
+        if local_path:
+            clone = None
+            clone_path = local_path
+            commit_sha = "pending-local-snapshot"
+        else:
+            clone = clone_repo(repo_url, job_id, branch)
+            clone_path = clone.clone_path
+            commit_sha = clone.commit_sha
+        update_job(job_id, clone_path=clone_path, progress=0.2)
 
         # ── Phase 2: Sieve ────────────────────────────────────────────
         update_job(job_id, status="sieving", progress=0.25)
-        sieve = sieve_repo(clone.clone_path)
+        sieve = sieve_repo(clone_path)
+        if local_path:
+            commit_sha = _local_snapshot_sha(sieve.files)
+        update_job(job_id, commit_sha=commit_sha)
+        _log(f"[{job_id}] Source ready @ {commit_sha[:8]}")
         update_job(job_id, files_total=sieve.total_files, progress=0.35)
         _log(f"[{job_id}] Sieve done — {sieve.total_files} files")
 
@@ -68,15 +76,27 @@ def _run_pipeline_sync(job_id: str, repo_url: str, branch: str | None) -> None:
         processed = 0
         total_tokens = 0
 
+        files_to_parse = sieve.files
+        reused: set[str] = set()
+        if incremental_from:
+            current_hashes = {
+                f.relative_path: hashlib.sha256(Path(f.absolute_path).read_bytes()).hexdigest()
+                for f in sieve.files
+            }
+            reused = copy_unchanged_files(incremental_from, job_id, current_hashes)
+            files_to_parse = [f for f in sieve.files if f.relative_path not in reused]
+            _log(f"[{job_id}] Reused {len(reused)} unchanged files; parsing {len(files_to_parse)} changed/new files")
+
         def on_progress(done: int, tot: int, current: str) -> None:
             nonlocal processed
             processed = done
             progress = 0.4 + (done / tot) * 0.55 if tot else 0.95
-            update_job(job_id, files_processed=done, progress=min(progress, 0.95))
+            if done % 25 == 0 or done == tot:
+                update_job(job_id, files_processed=done + len(reused), progress=min(progress, 0.95))
             if done % 50 == 0 or done == tot:
                 _log(f"[{job_id}] Parsed {done}/{tot} — {current}")
 
-        results = parse_all_files(sieve.files, clone.clone_path, on_progress)
+        results = parse_all_files(files_to_parse, clone_path, on_progress)
 
         # Store results
         for r in results:
@@ -96,9 +116,9 @@ def _run_pipeline_sync(job_id: str, repo_url: str, branch: str | None) -> None:
         update_job(job_id,
                    status="complete",
                    progress=1.0,
-                   files_processed=processed,
-                   tokens_estimate=total_tokens)
-        _log(f"[{job_id}] Complete — {processed} files, ~{total_tokens:,} tokens")
+                   files_processed=processed + len(reused),
+                   tokens_estimate=token_estimate(job_id))
+        _log(f"[{job_id}] Complete — {processed + len(reused)} files, ~{token_estimate(job_id):,} tokens")
 
     except Exception as e:
         msg = str(e)
@@ -107,7 +127,7 @@ def _run_pipeline_sync(job_id: str, repo_url: str, branch: str | None) -> None:
 
     finally:
         # Always clean up the clone directory — data is in SQLite now
-        if clone_path and Path(clone_path).exists():
+        if not local_path and clone_path and Path(clone_path).exists():
             try:
                 _rmtree(Path(clone_path))
                 _log(f"[{job_id}] Cleaned up clone dir")
@@ -125,6 +145,20 @@ def _rmtree(path: Path) -> None:
         except Exception:
             pass
     shutil.rmtree(str(path), onerror=_on_error)
+
+
+def _local_snapshot_sha(files) -> str:
+    """Hash all regular file paths and bytes without reading Git history."""
+    digest = hashlib.sha256()
+    for item in sorted(files, key=lambda entry: entry.relative_path):
+        try:
+            digest.update(item.relative_path.encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(Path(item.absolute_path).read_bytes())
+            digest.update(b"\0")
+        except OSError:
+            continue
+    return digest.hexdigest()
 
 
 def _log(msg: str) -> None:

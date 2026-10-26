@@ -58,6 +58,13 @@ def check_repo_limits(repo_path: Path) -> tuple[bool, str]:
     max_size_bytes = config.MAX_REPO_SIZE_MB * 1024 * 1024
 
     for item in repo_path.rglob("*"):
+        if item.is_symlink():
+            continue
+        relative = item.relative_to(repo_path)
+        if any(part in config.SKIP_DIRS or part.startswith(".") for part in relative.parts[:-1]):
+            continue
+        if item.name in config.SKIP_FILES:
+            continue
         if not item.is_file():
             continue
         total_files += 1

@@ -1,35 +1,45 @@
 """Groundwork MCP — tree-sitter AST parser (Python native bindings)."""
 
 import json
+import hashlib
 import sys
+import threading
 from pathlib import Path
 from typing import Optional
-import tree_sitter_javascript as tsjs
-import tree_sitter_typescript as tsts
-import tree_sitter_python as tspy
-from tree_sitter import Language, Parser, Node
+from tree_sitter import Parser, Node
+from tree_sitter_language_pack import get_language
 from .types import SievedFile, ParsedFile, SymbolRecord, EdgeRecord, CallRecord, FileParseResult
+from . import config
 
 # ── Language setup ────────────────────────────────────────────────────────────
 
-_JS_LANG = Language(tsjs.language())
-_TS_LANG = Language(tsts.language_typescript())
-_TSX_LANG = Language(tsts.language_tsx())
-_PY_LANG = Language(tspy.language())
+_parser_local = threading.local()
+_KNOWN_LANGUAGES = set(config.SUPPORTED_EXTENSIONS.values()) - {"config"}
 
-_PARSERS: dict[str, Parser] = {
-    "javascript": Parser(_JS_LANG),
-    "typescript": Parser(_TS_LANG),
-    "tsx": Parser(_TSX_LANG),
-    "python": Parser(_PY_LANG),
-}
+
+def _get_parser(language: str) -> Optional[Parser]:
+    parsers = getattr(_parser_local, "parsers", None)
+    if parsers is None:
+        parsers = {}
+        _parser_local.parsers = parsers
+    if language in parsers:
+        return parsers[language]
+    if language not in _KNOWN_LANGUAGES:
+        return None
+    try:
+        parser = Parser(get_language(language))
+    except Exception as exc:
+        _log(f"Could not load grammar {language}: {exc}")
+        return None
+    parsers[language] = parser
+    return parser
 
 _log_init = False
 
 def _ensure_logged() -> None:
     global _log_init
     if not _log_init:
-        _log(f"Parser initialized with {len(_PARSERS)} language(s): {', '.join(_PARSERS)}")
+        _log(f"Parser initialized with tree-sitter-language-pack ({len(_KNOWN_LANGUAGES)} mapped grammars)")
         _log_init = True
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -70,8 +80,8 @@ def _parse_file(f: SievedFile, repo_root: str) -> FileParseResult:
             )
         )
 
-    # Decode raw content for storage (cap at 500KB)
-    MAX_RAW = 500_000
+    # Keep the complete source file up to the configured sieve limit.
+    MAX_RAW = config.MAX_SINGLE_FILE_KB * 1024
     try:
         raw_text = source[:MAX_RAW].decode("utf-8", errors="replace")
     except Exception:
@@ -84,9 +94,10 @@ def _parse_file(f: SievedFile, repo_root: str) -> FileParseResult:
         size_bytes=f.size_bytes,
         ast_json=None,
         raw_content=raw_text,
+        content_hash=hashlib.sha256(source).hexdigest(),
     )
 
-    parser = _PARSERS.get(f.language)
+    parser = _get_parser(f.language)
     if not parser:
         # Non-parseable file (markdown, json, yaml, toml) — raw content already stored
         return FileParseResult(file=parsed_file)
@@ -279,6 +290,7 @@ def _node_to_edge(node: Node, file_path: str, repo_root: str) -> Optional[EdgeRe
                 target_file=_resolve_module(module, file_path, repo_root),
                 target_module=module,
                 edge_type="import",
+                line=node.start_point[0] + 1,
             )
 
     # Python: import / from ... import
@@ -290,6 +302,7 @@ def _node_to_edge(node: Node, file_path: str, repo_root: str) -> Optional[EdgeRe
                 target_file=_resolve_module(module, file_path, repo_root),
                 target_module=module,
                 edge_type="import",
+                line=node.start_point[0] + 1,
             )
 
     return None

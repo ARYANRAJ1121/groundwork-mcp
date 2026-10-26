@@ -65,6 +65,7 @@ class ParsedFile:
     size_bytes: int
     ast_json: Optional[str]      # AST for code files (internal use)
     raw_content: Optional[str]   # Raw UTF-8 source for all file types
+    content_hash: Optional[str] = None
 
 
 @dataclass
@@ -83,6 +84,7 @@ class EdgeRecord:
     target_file: Optional[str]
     target_module: str
     edge_type: EdgeType
+    line: int = 1
 
 
 @dataclass

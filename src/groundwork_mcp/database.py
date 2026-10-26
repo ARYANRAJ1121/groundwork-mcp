@@ -2,6 +2,7 @@
 
 import sqlite3
 import sys
+import threading
 from datetime import datetime, timezone
 from typing import Optional
 from . import config
@@ -9,38 +10,45 @@ from .types import IngestJob, ParsedFile, SymbolRecord, EdgeRecord, CallRecord
 
 # ── Connection ────────────────────────────────────────────────────────────────
 
-_conn: Optional[sqlite3.Connection] = None
+_local = threading.local()
+_connections: set[sqlite3.Connection] = set()
+_connections_lock = threading.Lock()
 
 
 def get_db() -> sqlite3.Connection:
-    global _conn
-    if _conn is None:
-        raise RuntimeError("Database not initialized. Call init_database() first.")
-    return _conn
+    conn = getattr(_local, "conn", None)
+    if conn is None:
+        conn = sqlite3.connect(str(config.DB_PATH), timeout=30, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.execute("PRAGMA cache_size = -32000")
+        _local.conn = conn
+        with _connections_lock:
+            _connections.add(conn)
+    return conn
 
 
 def init_database() -> None:
     """Initialize SQLite connection, create tables, run migrations."""
-    global _conn
     _log(f"Opening database: {config.DB_PATH}")
-    _conn = sqlite3.connect(str(config.DB_PATH), check_same_thread=False)
-    _conn.row_factory = sqlite3.Row
-    _conn.execute("PRAGMA foreign_keys = ON")
-    _conn.execute("PRAGMA journal_mode = WAL")
-    _conn.execute("PRAGMA synchronous = NORMAL")   # WAL+NORMAL = fast & safe
-    _conn.execute("PRAGMA cache_size = -32000")    # 32MB page cache
-    _conn.executescript(_SCHEMA)
-    _migrate(_conn)
-    _conn.commit()
+    conn = get_db()
+    conn.executescript(_SCHEMA)
+    _migrate(conn)
+    conn.commit()
     _log("Database ready")
 
 
 def close_database() -> None:
-    global _conn
-    if _conn:
-        _conn.commit()
-        _conn.close()
-        _conn = None
+    with _connections_lock:
+        for conn in _connections:
+            try:
+                conn.close()
+            except sqlite3.Error:
+                pass
+        _connections.clear()
+    _local.conn = None
 
 
 def _log(msg: str) -> None:
@@ -80,6 +88,7 @@ CREATE TABLE IF NOT EXISTS parsed_files (
     size_bytes INTEGER NOT NULL DEFAULT 0,
     ast_json TEXT,
     raw_content TEXT,
+    content_hash TEXT,
     created_at TEXT NOT NULL,
     UNIQUE(job_id, file_path)
 );
@@ -103,6 +112,7 @@ CREATE TABLE IF NOT EXISTS edges (
     target_file TEXT,
     target_module TEXT NOT NULL,
     edge_type TEXT NOT NULL DEFAULT 'import',
+    line INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL
 );
 
@@ -114,6 +124,7 @@ CREATE INDEX IF NOT EXISTS idx_edges_source  ON edges(job_id, source_file);
 CREATE INDEX IF NOT EXISTS idx_edges_target  ON edges(job_id, target_file);
 CREATE INDEX IF NOT EXISTS idx_files_job     ON parsed_files(job_id);
 CREATE INDEX IF NOT EXISTS idx_files_lang    ON parsed_files(job_id, language);
+CREATE INDEX IF NOT EXISTS idx_jobs_repo_commit ON jobs(repo_url, commit_sha, status);
 
 CREATE TABLE IF NOT EXISTS calls (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -123,6 +134,13 @@ CREATE TABLE IF NOT EXISTS calls (
     callee_name TEXT NOT NULL,
     line INTEGER NOT NULL,
     created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS public_snapshot_cache (
+    repo_url TEXT NOT NULL,
+    commit_sha TEXT NOT NULL,
+    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    PRIMARY KEY(repo_url, commit_sha)
 );
 
 CREATE INDEX IF NOT EXISTS idx_calls_job    ON calls(job_id);
@@ -142,6 +160,13 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if "raw_content" not in columns:
         conn.execute("ALTER TABLE parsed_files ADD COLUMN raw_content TEXT")
         _log("Migration: added parsed_files.raw_content")
+    if "content_hash" not in columns:
+        conn.execute("ALTER TABLE parsed_files ADD COLUMN content_hash TEXT")
+        _log("Migration: added parsed_files.content_hash")
+    edge_columns = {row[1] for row in conn.execute("PRAGMA table_info(edges)")}
+    if "line" not in edge_columns:
+        conn.execute("ALTER TABLE edges ADD COLUMN line INTEGER NOT NULL DEFAULT 1")
+        _log("Migration: added edges.line")
 
     # Add calls table if it doesn't exist
     tables = {
@@ -163,6 +188,26 @@ def _migrate(conn: sqlite3.Connection) -> None:
             CREATE INDEX idx_calls_caller ON calls(job_id, caller_function);
         """)
         _log("Migration: created calls table")
+
+    # FTS5 is rebuilt once during migration so existing indexes become searchable.
+    conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS parsed_files_fts USING fts5(raw_content, content='parsed_files', content_rowid='id', tokenize='unicode61')")
+    conn.executescript("""
+        CREATE TRIGGER IF NOT EXISTS parsed_files_ai AFTER INSERT ON parsed_files BEGIN
+          INSERT INTO parsed_files_fts(rowid, raw_content) VALUES (new.id, new.raw_content);
+        END;
+        CREATE TRIGGER IF NOT EXISTS parsed_files_ad AFTER DELETE ON parsed_files BEGIN
+          INSERT INTO parsed_files_fts(parsed_files_fts, rowid, raw_content) VALUES ('delete', old.id, old.raw_content);
+        END;
+        CREATE TRIGGER IF NOT EXISTS parsed_files_au AFTER UPDATE OF raw_content ON parsed_files BEGIN
+          INSERT INTO parsed_files_fts(parsed_files_fts, rowid, raw_content) VALUES ('delete', old.id, old.raw_content);
+          INSERT INTO parsed_files_fts(rowid, raw_content) VALUES (new.id, new.raw_content);
+        END;
+    """)
+    conn.execute("CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY)")
+    migrated = conn.execute("SELECT 1 FROM schema_migrations WHERE name='fts5-v1'").fetchone()
+    if not migrated:
+        conn.execute("INSERT INTO parsed_files_fts(parsed_files_fts) VALUES ('rebuild')")
+        conn.execute("INSERT INTO schema_migrations(name) VALUES ('fts5-v1')")
 
 
 # ── Job CRUD ──────────────────────────────────────────────────────────────────
@@ -187,6 +232,8 @@ def create_job(job_id: str, repo_url: str, repo_name: str, branch: str) -> Inges
 
 
 def update_job(job_id: str, **kwargs) -> None:
+    if not kwargs:
+        return
     kwargs["updated_at"] = _now()
     fields = ", ".join(f"{k} = ?" for k in kwargs)
     values = list(kwargs.values()) + [job_id]
@@ -202,6 +249,44 @@ def get_job(job_id: str) -> Optional[IngestJob]:
 def list_jobs() -> list[IngestJob]:
     rows = get_db().execute("SELECT * FROM jobs ORDER BY created_at DESC").fetchall()
     return [_row_to_job(r) for r in rows]
+
+
+def find_completed_snapshot(repo_url: str, commit_sha: str) -> Optional[IngestJob]:
+    normalized = repo_url.removesuffix(".git").rstrip("/")
+    rows = get_db().execute(
+        "SELECT * FROM jobs WHERE status='complete' AND commit_sha=? ORDER BY created_at DESC",
+        (commit_sha,),
+    ).fetchall()
+    for row in rows:
+        if row["repo_url"].removesuffix(".git").rstrip("/") == normalized:
+            return _row_to_job(row)
+    return None
+
+
+def claim_public_snapshot(repo_url: str, commit_sha: str, job_id: str) -> tuple[bool, str]:
+    """Atomically claim an index key, or return the job already building it."""
+    normalized = repo_url.removesuffix(".git").rstrip("/")
+    db = get_db()
+    db.execute("BEGIN IMMEDIATE")
+    db.execute(
+        "INSERT OR IGNORE INTO public_snapshot_cache(repo_url,commit_sha,job_id) VALUES(?,?,?)",
+        (normalized, commit_sha, job_id),
+    )
+    row = db.execute(
+        "SELECT job_id FROM public_snapshot_cache WHERE repo_url=? AND commit_sha=?",
+        (normalized, commit_sha),
+    ).fetchone()
+    current_id = row["job_id"]
+    if current_id != job_id:
+        current = get_job(current_id)
+        if not current or current.status == "failed":
+            db.execute(
+                "UPDATE public_snapshot_cache SET job_id=? WHERE repo_url=? AND commit_sha=?",
+                (job_id, normalized, commit_sha),
+            )
+            current_id = job_id
+    db.commit()
+    return current_id == job_id, current_id
 
 
 def delete_job(job_id: str) -> bool:
@@ -233,11 +318,16 @@ def _row_to_job(row: sqlite3.Row) -> IngestJob:
 def insert_parsed_file(job_id: str, f: ParsedFile) -> None:
     now = _now()
     get_db().execute(
-        """INSERT OR REPLACE INTO parsed_files
-           (job_id, file_path, language, line_count, size_bytes, ast_json, raw_content, created_at)
-           VALUES (?,?,?,?,?,?,?,?)""",
+        """INSERT INTO parsed_files
+           (job_id, file_path, language, line_count, size_bytes, ast_json, raw_content, content_hash, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?)
+           ON CONFLICT(job_id, file_path) DO UPDATE SET
+             language=excluded.language, line_count=excluded.line_count,
+             size_bytes=excluded.size_bytes, ast_json=excluded.ast_json,
+             raw_content=excluded.raw_content, content_hash=excluded.content_hash,
+             created_at=excluded.created_at""",
         (job_id, f.file_path, f.language, f.line_count, f.size_bytes,
-         f.ast_json, f.raw_content, now),
+         f.ast_json, f.raw_content, f.content_hash, now),
     )
 
 
@@ -256,15 +346,67 @@ def insert_edges(job_id: str, edges: list[EdgeRecord]) -> None:
     now = _now()
     get_db().executemany(
         """INSERT INTO edges
-           (job_id, source_file, target_file, target_module, edge_type, created_at)
-           VALUES (?,?,?,?,?,?)""",
-        [(job_id, e.source_file, e.target_file, e.target_module, e.edge_type, now)
+           (job_id, source_file, target_file, target_module, edge_type, line, created_at)
+           VALUES (?,?,?,?,?,?,?)""",
+        [(job_id, e.source_file, e.target_file, e.target_module, e.edge_type, e.line, now)
          for e in edges],
     )
 
 
 def commit_batch() -> None:
     get_db().commit()
+
+
+def copy_unchanged_files(base_job_id: str, job_id: str, current_hashes: dict[str, str]) -> set[str]:
+    """Copy unchanged indexed rows into a new commit snapshot and return reused paths."""
+    db = get_db()
+    reusable = {
+        row["file_path"] for row in db.execute(
+            "SELECT file_path, content_hash FROM parsed_files WHERE job_id=?", (base_job_id,)
+        )
+        if row["content_hash"] and current_hashes.get(row["file_path"]) == row["content_hash"]
+    }
+    for path in sorted(reusable):
+        row = db.execute(
+            "SELECT language,line_count,size_bytes,ast_json,raw_content,content_hash,created_at "
+            "FROM parsed_files WHERE job_id=? AND file_path=?", (base_job_id, path)
+        ).fetchone()
+        db.execute(
+            "INSERT INTO parsed_files(job_id,file_path,language,line_count,size_bytes,ast_json,raw_content,content_hash,created_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
+            (job_id, path, row["language"], row["line_count"], row["size_bytes"],
+             row["ast_json"], row["raw_content"], row["content_hash"], row["created_at"]),
+        )
+        db.execute(
+            "INSERT INTO symbols(job_id,file_path,symbol_name,symbol_type,start_line,end_line,signature,created_at) "
+            "SELECT ?,file_path,symbol_name,symbol_type,start_line,end_line,signature,created_at "
+            "FROM symbols WHERE job_id=? AND file_path=?", (job_id, base_job_id, path),
+        )
+        db.execute(
+            "INSERT INTO edges(job_id,source_file,target_file,target_module,edge_type,line,created_at) "
+            "SELECT ?,source_file,target_file,target_module,edge_type,line,created_at "
+            "FROM edges WHERE job_id=? AND source_file=?", (job_id, base_job_id, path),
+        )
+        db.execute(
+            "INSERT INTO calls(job_id,caller_file,caller_function,callee_name,line,created_at) "
+            "SELECT ?,caller_file,caller_function,callee_name,line,created_at "
+            "FROM calls WHERE job_id=? AND caller_file=?", (job_id, base_job_id, path),
+        )
+    db.execute(
+        "DELETE FROM edges WHERE job_id=? AND target_file IS NOT NULL "
+        "AND target_file NOT IN (SELECT file_path FROM parsed_files WHERE job_id=?)",
+        (job_id, job_id),
+    )
+    db.commit()
+    return reusable
+
+
+def token_estimate(job_id: str) -> int:
+    row = get_db().execute(
+        "SELECT COALESCE(SUM(CASE WHEN ast_json IS NOT NULL THEN length(ast_json) ELSE size_bytes END),0) AS n "
+        "FROM parsed_files WHERE job_id=?", (job_id,)
+    ).fetchone()
+    return int(row["n"] // 4)
 
 
 # ── Search ────────────────────────────────────────────────────────────────────
@@ -279,26 +421,23 @@ def search_content(
     Returns list of {file_path, language, line, snippet} dicts.
     """
     results = []
+    terms = [term.replace('"', '""') for term in query.split() if term]
+    if not terms:
+        return results
+    match_query = " AND ".join(f'"{term}"' for term in terms)
     rows = get_db().execute(
-        "SELECT file_path, language, raw_content FROM parsed_files "
-        "WHERE job_id = ? AND raw_content IS NOT NULL AND raw_content LIKE ? LIMIT 200",
-        (job_id, f"%{query}%"),
+        "SELECT p.file_path, p.language, p.raw_content, bm25(parsed_files_fts) AS rank "
+        "FROM parsed_files_fts JOIN parsed_files p ON p.id=parsed_files_fts.rowid "
+        "WHERE parsed_files_fts MATCH ? AND p.job_id=? "
+        "ORDER BY rank, p.file_path LIMIT ?",
+        (match_query, job_id, max(limit * 10, limit)),
     ).fetchall()
-
     query_lower = query.lower()
     for row in rows:
-        content = row["raw_content"]
-        if not content:
-            continue
-        lines = content.splitlines()
-        for i, line in enumerate(lines, 1):
-            if query_lower in line.lower():
-                results.append({
-                    "file_path": row["file_path"],
-                    "language": row["language"],
-                    "line": i,
-                    "snippet": line.strip(),
-                })
+        for i, line in enumerate((row["raw_content"] or "").splitlines(), 1):
+            if query_lower in line.lower() or all(t.lower() in line.lower() for t in query.split()):
+                results.append({"file_path": row["file_path"], "language": row["language"],
+                                "line": i, "snippet": line.strip(), "rank": row["rank"]})
                 if len(results) >= limit:
                     return results
     return results

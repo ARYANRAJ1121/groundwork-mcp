@@ -1,0 +1,106 @@
+[
+  {
+    "id": "service-port",
+    "question": "What port does the local development server use by default?",
+    "search_query": "port",
+    "expected_terms": ["5174"],
+    "gold_path": "src/config.py",
+    "gold_line": 1
+  },
+  {
+    "id": "retry-count",
+    "question": "How many retries does the queue worker make?",
+    "search_query": "retry",
+    "expected_terms": ["4"],
+    "gold_path": "src/queue.py",
+    "gold_line": 1
+  },
+  {
+    "id": "cache-ttl",
+    "question": "What is the cache time-to-live in seconds?",
+    "search_query": "CACHE_TTL_SECONDS",
+    "expected_terms": ["900"],
+    "gold_path": "src/config.py",
+    "gold_line": 2
+  },
+  {
+    "id": "queue-name",
+    "question": "What is the background queue named?",
+    "search_query": "queue_name",
+    "expected_terms": ["groundwork-jobs"],
+    "gold_path": "src/queue.py",
+    "gold_line": 2
+  },
+  {
+    "id": "request-limit",
+    "question": "What is the configured request limit per minute?",
+    "search_query": "MAX_REQUESTS_PER_MINUTE",
+    "expected_terms": ["120"],
+    "gold_path": "src/config.py",
+    "gold_line": 3
+  },
+  {
+    "id": "default-region",
+    "question": "Which cloud region is configured by default?",
+    "search_query": "DEFAULT_REGION",
+    "expected_terms": ["us-west-2"],
+    "gold_path": "src/config.py",
+    "gold_line": 4
+  },
+  {
+    "id": "feature-flags",
+    "question": "Are feature flags enabled by default?",
+    "search_query": "FEATURE_FLAGS_ENABLED",
+    "expected_terms": ["false"],
+    "gold_path": "src/config.py",
+    "gold_line": 5
+  },
+  {
+    "id": "worker-count",
+    "question": "How many background workers are configured?",
+    "search_query": "WORKER_COUNT",
+    "expected_terms": ["6"],
+    "gold_path": "src/queue.py",
+    "gold_line": 3
+  },
+  {
+    "id": "retry-backoff",
+    "question": "How many seconds is the retry backoff?",
+    "search_query": "RETRY_BACKOFF_SECONDS",
+    "expected_terms": ["3"],
+    "gold_path": "src/queue.py",
+    "gold_line": 4
+  },
+  {
+    "id": "service-name",
+    "question": "What is the service name?",
+    "search_query": "SERVICE_NAME",
+    "expected_terms": ["groundwork-api"],
+    "gold_path": "src/service.py",
+    "gold_line": 1
+  },
+  {
+    "id": "healthcheck",
+    "question": "What path is used for the health check?",
+    "search_query": "HEALTHCHECK_PATH",
+    "expected_terms": ["/healthz"],
+    "gold_path": "src/service.py",
+    "gold_line": 2
+  },
+  {
+    "id": "api-version",
+    "question": "Which API version is configured?",
+    "search_query": "API_VERSION",
+    "expected_terms": ["v2"],
+    "gold_path": "src/service.py",
+    "gold_line": 3
+  },
+  {
+    "id": "request-timeout",
+    "question": "What is the default service timeout in seconds?",
+    "search_query": "DEFAULT_TIMEOUT_SECONDS",
+    "expected_terms": ["25"],
+    "gold_path": "src/service.py",
+    "gold_line": 4
+  }
+]

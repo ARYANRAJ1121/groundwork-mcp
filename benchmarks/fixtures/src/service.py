@@ -1,0 +1,4 @@
+SERVICE_NAME = "groundwork-api"
+HEALTHCHECK_PATH = "/healthz"
+API_VERSION = "v2"
+DEFAULT_TIMEOUT_SECONDS = 25

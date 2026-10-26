@@ -38,6 +38,9 @@ def sieve_repo(repo_path: str) -> SieveResult:
             return
 
         for entry in entries:
+            if entry.is_symlink():
+                skip("symlink")
+                continue
             if entry.is_dir():
                 if entry.name in config.SKIP_DIRS:
                     skip(f"skipped_dir:{entry.name}")
@@ -63,7 +66,7 @@ def sieve_repo(repo_path: str) -> SieveResult:
                     continue
 
                 ext = entry.suffix.lower()
-                language = config.SUPPORTED_EXTENSIONS.get(ext)
+                language = config.SUPPORTED_EXTENSIONS.get(ext) or config.SUPPORTED_FILENAMES.get(entry.name.lower())
                 if not language:
                     skip("unsupported_ext")
                     continue
