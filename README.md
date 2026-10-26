@@ -121,7 +121,7 @@ Cursor `mcp.json`:
 }
 ```
 
-Claude Desktop uses the same command and args in its `mcpServers.groundwork` entry. PyPI instructions become live after a tagged release is published.
+Claude Desktop uses the same command and args in its `mcpServers.groundwork` entry. The PyPI command becomes live after PyPI trusted publishing is configured and a GitHub release successfully publishes the package. Until then, use the source setup below or the published Docker image.
 
 ### Prerequisites
 
@@ -251,9 +251,10 @@ For a self-hosted remote MCP endpoint, register a GitHub OAuth App and set the O
 Local stdio mode keeps the index in a named volume:
 
 ```bash
-docker build -t groundwork-mcp .
-docker run --rm -i -v groundwork-data:/data groundwork-mcp
+docker run --rm -i -v groundwork-data:/data ghcr.io/aryanraj1121/groundwork-mcp:v0.5.0
 ```
+
+To build the image from source instead, run `docker build -t groundwork-mcp .` and replace the image name above with `groundwork-mcp`.
 
 Compose runs the OAuth-protected MCP endpoint and public architecture page together. Set the OAuth variables in `.env`, set the base URL to the public HTTPS MCP URL, and route TLS traffic to ports 8000 and 8080:
 
