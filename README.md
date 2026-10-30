@@ -11,6 +11,8 @@ Ingest → Parse → Index → Query. Local-first. Source stays on your machine 
 [![Laya](https://img.shields.io/badge/Router-Laya-purple?style=flat-square)](https://github.com/NandhaKishorM/laya)
 [![SQLite](https://img.shields.io/badge/Database-SQLite-orange?style=flat-square)](https://sqlite.org)
 [![License](https://img.shields.io/badge/License-MIT-gray?style=flat-square)](LICENSE)
+[![CI](https://img.shields.io/github/actions/workflow/status/AryanRaj315/groundwork-mcp/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/AryanRaj315/groundwork-mcp/actions)
+[![PyPI](https://img.shields.io/pypi/v/groundwork-mcp?style=flat-square)](https://pypi.org/project/groundwork-mcp/)
 
 </div>
 
@@ -280,19 +282,24 @@ The public page only indexes GitHub public repos. Its shared cache is keyed by `
 |-------|---------|
 | `jobs` | One immutable repo snapshot — status, progress, commit SHA, timestamps |
 | `parsed_files` | Every indexed file — language, line count, raw content, AST |
+| `parsed_files_fts` | FTS5 virtual table — BM25-ranked full-text search |
 | `symbols` | Functions, classes, methods, types — with file, line, signature |
 | `edges` | Import/dependency edges between files and external modules |
+| `calls` | Function call graph — caller, callee, file, line |
+| `public_snapshot_cache` | Shared index deduplication by (repo, commit SHA) |
+| `schema_migrations` | Tracks applied migrations |
 
 ### Benchmark
 
-`benchmarks/tasks.json` and its fixture repo define a repeatable paired repo-QA benchmark. The same model answers once with the complete repository (the no-Groundwork baseline) and once with Groundwork FTS-retrieved evidence. It reports answer accuracy, citation precision for both arms, and provider-reported token counts with per-task responses. Run it with:
+`benchmarks/tasks.json` and its fixture repo define a repeatable paired repo-QA benchmark. The same model answers once with the complete repository (the no-Groundwork baseline) and once with Groundwork FTS-retrieved evidence. It reports answer accuracy, citation precision for both arms, and provider-reported token counts with per-task responses. The benchmark runs locally through Ollama and does not require a paid API key. Start Ollama and install a model, then run:
 
 ```bash
 uv sync --locked
-uv run python benchmarks/run.py --model <responses-api-model>
+ollama pull llama3
+uv run python benchmarks/run.py --model llama3:latest
 ```
 
-Set `OPENAI_API_KEY` first. No measured benchmark result is claimed until an API-backed run is performed; raw output is written to the ignored `benchmark-results.json`.
+Set `OLLAMA_HOST` if Ollama is listening somewhere other than `http://localhost:11434`. Raw output is written to the ignored `benchmark-results.json`.
 
 ---
 
