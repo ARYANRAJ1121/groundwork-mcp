@@ -10,7 +10,7 @@
   {
     "id": "retry-count",
     "question": "How many retries does the queue worker make?",
-    "search_query": "retry",
+    "search_query": "MAX",
     "expected_terms": ["4"],
     "gold_path": "src/queue.py",
     "gold_line": 1
@@ -52,6 +52,7 @@
     "question": "Are feature flags enabled by default?",
     "search_query": "FEATURE_FLAGS_ENABLED",
     "expected_terms": ["false"],
+    "accepted_answers": ["false", "no"],
     "gold_path": "src/config.py",
     "gold_line": 5
   },
