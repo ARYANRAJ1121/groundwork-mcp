@@ -46,3 +46,20 @@ jobs:
       - name: Lint
         run: uv run ruff check src/ tests/
         continue-on-error: true
+
+  vscode-extension:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: extensions/vscode
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: extensions/vscode/package-lock.json
+      - name: Install extension dependencies
+        run: npm ci
+      - name: Type-check and bundle extension
+        run: npm run compile
