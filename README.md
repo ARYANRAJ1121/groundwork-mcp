@@ -52,7 +52,7 @@ GitHub Repo URL
   SQLite (local, WAL mode)     ← jobs · parsed_files · FTS5 · symbols · edges
       │                          32MB cache · auto-migration · cascade deletes
       ▼
-  13 MCP Tools                 ← structured, commit-pinned evidence
+  14 MCP Tools                 ← structured, commit-pinned evidence
       │
       ▼
   Auto-cleanup                 ← clone directory removed after parse (disk efficient)
@@ -74,9 +74,10 @@ GitHub Repo URL
 | 8 | `get_file_content` | Read a requested line range with a structured commit-pinned citation |
 | 9 | `list_repo_files` | Structured file list with language, size, line count, and commit-pinned citations |
 | 10 | `delete_repo` | Permanently remove a repo and all its data from the index |
-| 11 | `search_code` | Ranked SQLite FTS5 search with structured citations |
+| 11 | `search_code` | Ranked SQLite FTS5 keyword search, with optional semantic and hybrid modes |
 | 12 | `get_call_graph` | Trace who calls a function and what a function calls |
 | 13 | `ingest_local_path` | Index a local workspace without uploading its source |
+| 14 | `index_semantic` | Build an optional local embedding index with Ollama for semantic/hybrid search |
 
 ---
 
@@ -122,6 +123,20 @@ Cursor `mcp.json`:
   }
 }
 ```
+
+### VS Code and Cursor workspace extension
+
+The lightweight workspace extension is in [`extensions/vscode`](extensions/vscode). It starts Groundwork over local MCP stdio and indexes each open workspace through `ingest_local_path`:
+
+```bash
+cd extensions/vscode
+npm install
+npm run compile
+npx @vscode/vsce package
+code --install-extension groundwork-mcp-0.1.0.vsix
+```
+
+The extension defaults to the PyPI `uvx` command. Until PyPI publishing is enabled, set `groundwork.command` to `uv` and `groundwork.args` to `run --project <path-to-groundwork-mcp> groundwork-mcp`. Automatic workspace indexing can be disabled with `groundwork.autoIndex`.
 
 Claude Desktop uses the same command and args in its `mcpServers.groundwork` entry. The PyPI command becomes live after PyPI trusted publishing is configured and a GitHub release successfully publishes the package. Until then, use the source setup below or the published Docker image.
 
