@@ -138,7 +138,7 @@ code --install-extension groundwork-mcp-0.1.0.vsix
 
 The extension defaults to the PyPI `uvx` command. Until PyPI publishing is enabled, set `groundwork.command` to `uv` and `groundwork.args` to `run --project <path-to-groundwork-mcp> groundwork-mcp`. Automatic workspace indexing can be disabled with `groundwork.autoIndex`.
 
-Claude Desktop uses the same command and args in its `mcpServers.groundwork` entry. The PyPI command becomes live after PyPI trusted publishing is configured and a GitHub release successfully publishes the package. Until then, use the source setup below or the published Docker image.
+Claude Desktop uses the same command and args in its `mcpServers.groundwork` entry. The PyPI command becomes live after PyPI trusted publishing is configured and a GitHub release successfully publishes the package. For the first release, add a pending trusted publisher in PyPI account settings with GitHub owner `ARYANRAJ1121`, repository `groundwork-mcp`, workflow `publish-pypi.yml`, and environment `pypi`, then publish GitHub Release `v0.6.0`. Until that succeeds, use the source setup below or the existing `v0.5.0` Docker image.
 
 ### Prerequisites
 
@@ -270,7 +270,7 @@ For a self-hosted remote MCP endpoint, register a GitHub OAuth App and set the O
 Local stdio mode keeps the index in a named volume:
 
 ```bash
-docker run --rm -i -v groundwork-data:/data ghcr.io/aryanraj1121/groundwork-mcp:v0.5.0
+docker run --rm -i -v groundwork-data:/data ghcr.io/aryanraj1121/groundwork-mcp:v0.6.0
 ```
 
 To build the image from source instead, run `docker build -t groundwork-mcp .` and replace the image name above with `groundwork-mcp`.
