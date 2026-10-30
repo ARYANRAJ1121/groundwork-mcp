@@ -315,6 +315,8 @@ uv run python benchmarks/run.py --model llama3:latest
 
 Set `OLLAMA_HOST` if Ollama is listening somewhere other than `http://localhost:11434`. Raw output is written to the ignored `benchmark-results.json`.
 
+Initial local run (2026-10-30, Ollama `llama3:latest`, 13 synthetic fixture questions): baseline and Groundwork each scored 13/13 answers and 13/13 exact citations. The baseline used 3,330 model-reported tokens; Groundwork used 1,638, a 50.81% reduction. This is one small fixture run, not evidence of lower hallucination rates or production performance. The per-task report is in [`benchmarks/results/ollama-llama3-2026-10-30.json`](benchmarks/results/ollama-llama3-2026-10-30.json).
+
 ---
 
 ## Production Features
