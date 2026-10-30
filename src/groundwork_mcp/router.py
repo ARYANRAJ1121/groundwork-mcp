@@ -83,8 +83,12 @@ TOOL_CRITERIA: dict[str, str] = {
     ),
     "search_code": (
         "User wants to do a text/grep search across code for strings, config values, "
-        "error messages, or variable names. "
-        "Keywords: search, find text, grep, where is string, look for."
+        "error messages, or variable names, or conceptual semantic/hybrid retrieval. "
+        "Keywords: search, find text, grep, semantic search, hybrid retrieval, look for."
+    ),
+    "index_semantic": (
+        "User wants to generate local embeddings for an indexed repository before "
+        "semantic or hybrid search. Keywords: index semantic, build embeddings."
     ),
     "get_call_graph": (
         "User wants to trace function calls — who calls a function, what a function "
@@ -137,6 +141,7 @@ ROUTING_QUESTIONS: dict[str, dict[str, Any]] = {
 # ── Keyword-based fallback router ────────────────────────────────────────────
 
 _KEYWORD_MAP: list[tuple[list[str], str]] = [
+    (["index semantic", "build embeddings", "create embeddings"], "index_semantic"),
     (["delete", "remove", "clean up"], "delete_repo"),
     (["status", "progress", "done yet", "how far"], "get_ingest_status"),
     (["list repo", "show repo", "all repo", "ingested repo"], "list_ingested_repos"),
