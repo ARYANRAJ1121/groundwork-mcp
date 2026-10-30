@@ -1,4 +1,4 @@
-"""Run a paired Groundwork/no-context repo QA evaluation with the OpenAI Responses API."""
+"""Run a paired Groundwork/no-context repo QA evaluation with a local Ollama model."""
 
 import argparse
 import json
@@ -16,23 +16,34 @@ FIXTURE = ROOT / "fixtures"
 
 
 def call_model(model: str, prompt: str) -> tuple[str, int]:
-    key = os.environ.get("OPENAI_API_KEY")
-    if not key:
-        raise SystemExit("Set OPENAI_API_KEY to run the benchmark.")
+    base_url = os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
     request = urllib.request.Request(
-        "https://api.openai.com/v1/responses",
-        data=json.dumps({"model": model, "input": prompt}).encode(),
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        f"{base_url}/api/chat",
+        data=json.dumps({
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": False,
+            "format": "json",
+        }).encode(),
+        headers={"Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(request, timeout=180) as response:
-        result = json.load(response)
-    text = result.get("output_text") or ""
-    tokens = (result.get("usage") or {}).get("total_tokens") or 0
+    try:
+        with urllib.request.urlopen(request, timeout=600) as response:
+            result = json.load(response)
+    except Exception as exc:
+        raise SystemExit(
+            f"Could not call local Ollama at {base_url}. Start Ollama and confirm model "
+            f"'{model}' is installed (ollama pull {model}). Details: {exc}"
+        ) from exc
+    text = (result.get("message") or {}).get("content") or ""
+    tokens = (result.get("prompt_eval_count") or 0) + (result.get("eval_count") or 0)
     return text, tokens
 
 
 def score_answer(text: str, task: dict) -> bool:
     lowered = text.casefold()
+    if task.get("accepted_answers"):
+        return any(answer.casefold() in lowered for answer in task["accepted_answers"])
     return all(term.casefold() in lowered for term in task["expected_terms"])
 
 
@@ -70,9 +81,11 @@ def citation_precision(text: str, task: dict) -> tuple[int, int]:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", required=True)
+    parser.add_argument("--model", default="llama3:latest", help="Installed local Ollama model (default: llama3:latest)")
+    parser.add_argument("--base-url", default=os.environ.get("OLLAMA_HOST", "http://localhost:11434"))
     parser.add_argument("--output", default="benchmark-results.json")
     args = parser.parse_args()
+    os.environ["OLLAMA_HOST"] = args.base_url
 
     with tempfile.TemporaryDirectory(prefix="groundwork-benchmark-") as tmp:
         old_path = config.DB_PATH
