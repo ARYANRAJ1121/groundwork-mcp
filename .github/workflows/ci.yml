@@ -15,7 +15,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -24,7 +24,7 @@ jobs:
       - name: Set up Python
         run: uv python install ${{ matrix.python-version }}
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: uv sync --locked --extra dev --extra hosted
       - name: Run tests
         run: uv run pytest -v --tb=short
       - name: Type check
@@ -39,7 +39,7 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: uv sync --locked --extra dev --extra hosted
       - name: Check formatting
         run: uv run ruff format --check src/ tests/
         continue-on-error: true
