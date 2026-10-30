@@ -1,0 +1,163 @@
+{
+  "run_date": "2026-10-30",
+  "model": "llama3:latest",
+  "runner": "Ollama 0.24.0",
+  "dataset": "groundwork-mini-repo-qa-v1",
+  "tasks": 13,
+  "method": "Paired evaluation: same model answers with full fixture context and FTS5-retrieved evidence. Reported tokens are Ollama prompt_eval_count + eval_count.",
+  "metrics": {
+    "baseline_accuracy": 1.0,
+    "grounded_accuracy": 1.0,
+    "baseline_citation_precision": 1.0,
+    "grounded_citation_precision": 1.0,
+    "baseline_tokens": 3330,
+    "grounded_tokens": 1638,
+    "token_savings_percent": 50.81
+  },
+  "caveat": "Single run on a 13-question synthetic repository fixture. Accuracy and citation precision are perfect on this small set, so this run does not establish hallucination reduction or generalize to production repositories.",
+  "per_task": [
+    {
+      "id": "service-port",
+      "baseline_correct": true,
+      "grounded_correct": true,
+      "baseline_citation_correct": 1,
+      "baseline_citation_count": 1,
+      "grounded_citation_correct": 1,
+      "grounded_citation_count": 1,
+      "baseline_tokens": 260,
+      "grounded_tokens": 128
+    },
+    {
+      "id": "retry-count",
+      "baseline_correct": true,
+      "grounded_correct": true,
+      "baseline_citation_correct": 1,
+      "baseline_citation_count": 1,
+      "grounded_citation_correct": 1,
+      "grounded_citation_count": 1,
+      "baseline_tokens": 258,
+      "grounded_tokens": 136
+    },
+    {
+      "id": "cache-ttl",
+      "baseline_correct": true,
+      "grounded_correct": true,
+      "baseline_citation_correct": 1,
+      "baseline_citation_count": 1,
+      "grounded_citation_correct": 1,
+      "grounded_citation_count": 1,
+      "baseline_tokens": 258,
+      "grounded_tokens": 126
+    },
+    {
+      "id": "queue-name",
+      "baseline_correct": true,
+      "grounded_correct": true,
+      "baseline_citation_correct": 1,
+      "baseline_citation_count": 1,
+      "grounded_citation_correct": 1,
+      "grounded_citation_count": 1,
+      "baseline_tokens": 259,
+      "grounded_tokens": 130
+    },
+    {
+      "id": "request-limit",
+      "baseline_correct": true,
+      "grounded_correct": true,
+      "baseline_citation_correct": 1,
+      "baseline_citation_count": 1,
+      "grounded_citation_correct": 1,
+      "grounded_citation_count": 1,
+      "baseline_tokens": 257,
+      "grounded_tokens": 122
+    },
+    {
+      "id": "default-region",
+      "baseline_correct": true,
+      "grounded_correct": true,
+      "baseline_citation_correct": 1,
+      "baseline_citation_count": 1,
+      "grounded_citation_correct": 1,
+      "grounded_citation_count": 1,
+      "baseline_tokens": 259,
+      "grounded_tokens": 129
+    },
+    {
+      "id": "feature-flags",
+      "baseline_correct": true,
+      "grounded_correct": true,
+      "baseline_citation_correct": 1,
+      "baseline_citation_count": 1,
+      "grounded_citation_correct": 1,
+      "grounded_citation_count": 1,
+      "baseline_tokens": 254,
+      "grounded_tokens": 121
+    },
+    {
+      "id": "worker-count",
+      "baseline_correct": true,
+      "grounded_correct": true,
+      "baseline_citation_correct": 1,
+      "baseline_citation_count": 1,
+      "grounded_citation_correct": 1,
+      "grounded_citation_count": 1,
+      "baseline_tokens": 256,
+      "grounded_tokens": 124
+    },
+    {
+      "id": "retry-backoff",
+      "baseline_correct": true,
+      "grounded_correct": true,
+      "baseline_citation_correct": 1,
+      "baseline_citation_count": 1,
+      "grounded_citation_correct": 1,
+      "grounded_citation_count": 1,
+      "baseline_tokens": 253,
+      "grounded_tokens": 123
+    },
+    {
+      "id": "service-name",
+      "baseline_correct": true,
+      "grounded_correct": true,
+      "baseline_citation_correct": 1,
+      "baseline_citation_count": 1,
+      "grounded_citation_correct": 1,
+      "grounded_citation_count": 1,
+      "baseline_tokens": 256,
+      "grounded_tokens": 125
+    },
+    {
+      "id": "healthcheck",
+      "baseline_correct": true,
+      "grounded_correct": true,
+      "baseline_citation_correct": 1,
+      "baseline_citation_count": 1,
+      "grounded_citation_correct": 1,
+      "grounded_citation_count": 1,
+      "baseline_tokens": 253,
+      "grounded_tokens": 127
+    },
+    {
+      "id": "api-version",
+      "baseline_correct": true,
+      "grounded_correct": true,
+      "baseline_citation_correct": 1,
+      "baseline_citation_count": 1,
+      "grounded_citation_correct": 1,
+      "grounded_citation_count": 1,
+      "baseline_tokens": 250,
+      "grounded_tokens": 123
+    },
+    {
+      "id": "request-timeout",
+      "baseline_correct": true,
+      "grounded_correct": true,
+      "baseline_citation_correct": 1,
+      "baseline_citation_count": 1,
+      "grounded_citation_correct": 1,
+      "grounded_citation_count": 1,
+      "baseline_tokens": 257,
+      "grounded_tokens": 124
+    }
+  ]
+}
