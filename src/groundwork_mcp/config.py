@@ -26,6 +26,8 @@ OAUTH_CLIENT_ID = os.environ.get("GROUNDWORK_OAUTH_GITHUB_CLIENT_ID", "").strip(
 OAUTH_CLIENT_SECRET = os.environ.get("GROUNDWORK_OAUTH_GITHUB_CLIENT_SECRET", "").strip()
 OAUTH_BASE_URL = os.environ.get("GROUNDWORK_OAUTH_GITHUB_BASE_URL", "").strip()
 OAUTH_JWT_SIGNING_KEY = os.environ.get("GROUNDWORK_OAUTH_JWT_SIGNING_KEY", "")
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
+EMBEDDING_MODEL = os.environ.get("GROUNDWORK_EMBEDDING_MODEL", "nomic-embed-text").strip()
 
 # File extension → language mapping
 SUPPORTED_EXTENSIONS: dict[str, str] = {
