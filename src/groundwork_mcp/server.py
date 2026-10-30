@@ -12,7 +12,8 @@ Groundwork MCP Server — FastMCP implementation.
   get_file_content     — read raw content of any indexed file (README, JSON, source)
   list_repo_files      — list all indexed files with language, size, line count
   delete_repo          — permanently remove a repo from the index
-  search_code          — full-text search across all indexed file content
+  search_code          — keyword or hybrid search across indexed file content
+  index_semantic       — opt-in local embedding index using Ollama
   get_call_graph       — trace who calls a function and what it calls
 """
 
@@ -29,7 +30,7 @@ from fastmcp.server.auth.providers.github import GitHubProvider
 from .database import (
     init_database, close_database,
     create_job, get_job, list_jobs, delete_job,
-    search_content, get_callers, get_callees,
+    search_content, get_callers, get_callees, get_semantic_chunks,
     find_completed_snapshot,
 )
 from .pipeline import run_pipeline
@@ -37,6 +38,7 @@ from .cloner import resolve_remote_commit
 from . import config
 from .security import validate_repo_url, extract_repo_name
 from .router import route_query as _route_query
+from .semantic import index_job as build_semantic_index, search as semantic_search
 
 MAX_FILE_READ_LINES = 200
 
@@ -639,13 +641,38 @@ def delete_repo(job_id: str) -> str:
     return f"Delete failed for {job_id}"
 
 
+# ── Optional semantic index ────────────────────────────────────────────────
+
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
+def index_semantic(job_id: str) -> dict:
+    """Build a local semantic index for an indexed repository using Ollama.
+
+    Set OLLAMA_HOST and GROUNDWORK_EMBEDDING_MODEL as needed. Install the default
+    embedding model with `ollama pull nomic-embed-text` before indexing.
+
+    Args:
+        job_id: The completed repository snapshot to embed.
+    """
+    job = get_job(job_id)
+    if not job:
+        return {"error": f"Job not found: {job_id}"}
+    if job.status != "complete":
+        return {"error": f"Job not complete (status: {job.status})"}
+    try:
+        count = build_semantic_index(job_id)
+    except RuntimeError as exc:
+        return {"error": str(exc)}
+    return {"repo": job.repo_name, "commit_sha": job.commit_sha,
+            "model": config.EMBEDDING_MODEL, "chunks_indexed": count}
+
+
 # ── Tool 10: search_code ───────────────────────────────────────────────────
 
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False})
-def search_code(job_id: str, query: str, limit: int = 20) -> dict:
+def search_code(job_id: str, query: str, limit: int = 20, mode: str = "keyword") -> dict:
     """
-    Full-text search across all indexed file content in a repository.
-    Returns matching lines with file path and line number.
+    Search indexed content using ranked keywords or hybrid keyword plus semantic retrieval.
+    Semantic and hybrid modes require an index built with index_semantic(job_id).
     Use this to find: config values, string literals, comments, variable names,
     error messages, or any text that isn't a symbol definition.
 
@@ -653,22 +680,56 @@ def search_code(job_id: str, query: str, limit: int = 20) -> dict:
         job_id: The job_id from ingest_repo or list_ingested_repos
         query:  Text to search for (case-insensitive)
         limit:  Max results to return (default 20, max 100)
+        mode:  `keyword` (default), `hybrid`, or `semantic`.
     """
     job = get_job(job_id)
     if not job:
         return {"error": f"Job not found: {job_id}"}
     if job.status != "complete":
         return {"error": f"Job not complete (status: {job.status})"}
+    mode = mode.strip().lower()
+    if mode not in {"keyword", "hybrid", "semantic"}:
+        return {"error": "mode must be one of: keyword, hybrid, semantic"}
 
     limit = min(max(1, limit), 100)
-    hits = search_content(job_id, query, limit)
+    lexical_hits = search_content(job_id, query, limit) if mode != "semantic" else []
+    if mode == "keyword":
+        hits = lexical_hits
+    else:
+        if not get_semantic_chunks(job_id, config.EMBEDDING_MODEL):
+            return {"error": "Semantic index not found. Call index_semantic(job_id) first.",
+                    "repo": job.repo_name, "commit_sha": job.commit_sha}
+        try:
+            semantic_hits = semantic_search(job_id, query, limit)
+        except RuntimeError as exc:
+            return {"error": str(exc), "repo": job.repo_name, "commit_sha": job.commit_sha}
+        if mode == "semantic":
+            hits = semantic_hits
+        else:
+            fused: dict[tuple[str, int, int], dict] = {}
+            for rank, hit in enumerate(lexical_hits, 1):
+                key = (hit["file_path"], hit["line"], hit["line"])
+                fused[key] = {**hit, "rrf": 1 / (60 + rank), "retrieval": "keyword"}
+            for rank, hit in enumerate(semantic_hits, 1):
+                matching = next((key for key, value in fused.items()
+                                 if key[0] == hit["file_path"]
+                                 and value["line"] >= hit["line"]
+                                 and value["line"] <= hit.get("line_end", hit["line"])), None)
+                if matching is None:
+                    matching = (hit["file_path"], hit["line"], hit["line_end"])
+                    fused[matching] = {**hit, "rrf": 0.0, "retrieval": "semantic"}
+                fused[matching]["rrf"] += 1 / (60 + rank)
+                if fused[matching]["retrieval"] == "keyword":
+                    fused[matching]["retrieval"] = "hybrid"
+            hits = sorted(fused.values(), key=lambda item: (-item["rrf"], item["file_path"], item["line"]))[:limit]
 
     if not hits:
         return {"repo": job.repo_name, "commit_sha": job.commit_sha, "query": query,
                 "repository_content_untrusted": True, "results": []}
     results = []
     for hit in hits:
-        citation = _citation(job, hit["file_path"], hit["line"], hit["line"])
+        line_end = hit.get("line_end", hit["line"])
+        citation = _citation(job, hit["file_path"], hit["line"], line_end)
         results.append({**hit,
                         "snippet": _untrusted_repository_text(hit["snippet"]),
                         "repo": job.repo_name, "commit_sha": job.commit_sha,
