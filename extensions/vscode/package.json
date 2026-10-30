@@ -1,0 +1,61 @@
+{
+  "name": "groundwork-mcp",
+  "displayName": "Groundwork MCP",
+  "description": "Automatically index the current VS Code workspace with Groundwork MCP.",
+  "version": "0.1.0",
+  "publisher": "groundwork-mcp",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ARYANRAJ1121/groundwork-mcp.git",
+    "directory": "extensions/vscode"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished", "onCommand:groundwork.indexWorkspace"],
+  "main": "./out/extension.js",
+  "scripts": {
+    "compile": "tsc --noEmit -p . && esbuild src/extension.ts --bundle --platform=node --target=node18 --format=cjs --external:vscode --outfile=out/extension.js",
+    "vscode:prepublish": "npm run compile"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/client": "^2.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/vscode": "^1.90.0",
+    "esbuild": "^0.25.5",
+    "typescript": "^5.8.3"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "groundwork.indexWorkspace",
+        "title": "Groundwork: Index Workspace"
+      }
+    ],
+    "configuration": {
+      "title": "Groundwork MCP",
+      "properties": {
+        "groundwork.command": {
+          "type": "string",
+          "default": "uvx",
+          "description": "Executable used to start the Groundwork MCP server."
+        },
+        "groundwork.args": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["--from", "groundwork-mcp", "groundwork-mcp"],
+          "description": "Arguments passed to the Groundwork MCP server executable."
+        },
+        "groundwork.autoIndex": {
+          "type": "boolean",
+          "default": true,
+          "description": "Index each opened workspace folder automatically."
+        }
+      }
+    }
+  }
+}
