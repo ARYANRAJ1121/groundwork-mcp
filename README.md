@@ -265,6 +265,8 @@ Call `ingest_local_path(path)` to index a directory on the machine running Groun
 
 For a self-hosted remote MCP endpoint, register a GitHub OAuth App and set the OAuth variables above, then start with `GROUNDWORK_TRANSPORT=http`. FastMCP serves Streamable HTTP at `/mcp`. Put HTTPS/TLS in front of public deployments. The unauthenticated HTTP override is for local development only.
 
+See the [hosted deployment guide](docs/deployment.md) for a Docker Compose VPS setup, HTTPS proxy example, OAuth callback, and Marketplace publishing steps.
+
 ### Docker
 
 Local stdio mode keeps the index in a named volume:
