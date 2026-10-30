@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 # ── Lazy-loaded Laya Router ──────────────────────────────────────────────────
 
-_laya_router = None
+_laya_router: Any = None
 
 
 def _get_router():
@@ -28,12 +28,12 @@ def _get_router():
     global _laya_router
     if _laya_router is None:
         try:
-            from laya import Router
+            from laya import Router  # type: ignore[import-not-found, import-untyped]
             # OPTIMIZATION: preload=True keeps the checkpoints hot in memory 
             # for instant ~33ms routing, rather than loading on the fly.
             _laya_router = Router(preload=True)
             logger.info("Laya Router initialised (preloaded)")
-        except ImportError:
+        except (ImportError, ModuleNotFoundError):
             logger.warning(
                 "laya is not installed. "
                 "Install with: pip install laya  — falling back to keyword router."
@@ -91,6 +91,11 @@ TOOL_CRITERIA: dict[str, str] = {
         "calls, or execution flow. "
         "Keywords: call graph, callers, callees, who calls, what calls, trace."
     ),
+    "ingest_local_path": (
+        "User wants to index or ingest a local directory, workspace, or folder "
+        "on their computer without cloning from GitHub. "
+        "Keywords: local path, local repo, local workspace, index local, my machine."
+    ),
 }
 
 # ── Laya question schema ─────────────────────────────────────────────────────
@@ -132,17 +137,18 @@ ROUTING_QUESTIONS: dict[str, dict[str, Any]] = {
 # ── Keyword-based fallback router ────────────────────────────────────────────
 
 _KEYWORD_MAP: list[tuple[list[str], str]] = [
-    (["ingest", "clone", "index", "add repo", "scan"], "ingest_repo"),
+    (["delete", "remove", "clean up"], "delete_repo"),
     (["status", "progress", "done yet", "how far"], "get_ingest_status"),
-    (["list repo", "show repo", "all repo", "ingested"], "list_ingested_repos"),
+    (["list repo", "show repo", "all repo", "ingested repo"], "list_ingested_repos"),
+    (["call graph", "callers", "callees", "who calls", "what calls", "call", "trace"], "get_call_graph"),
+    (["local path", "local repo", "local workspace", "index local", "my machine", "local folder"], "ingest_local_path"),
+    (["ingest", "clone", "index", "add repo", "scan"], "ingest_repo"),
     (["summary", "overview", "architecture", "structure", "about this"], "get_repo_summary"),
     (["symbol", "function", "class", "method", "where is", "defined", "definition"], "query_symbols"),
-    (["import", "dependency", "depends", "requires"], "get_import_edges"),
-    (["readme", "read file", "show file", "file content", "what does"], "get_file_content"),
-    (["list file", "show file", "browse", "what file"], "list_repo_files"),
-    (["delete", "remove", "clean up"], "delete_repo"),
+    (["import", "depend", "requires"], "get_import_edges"),
+    (["readme", "read file", "show file", "file content", "what does", "file say"], "get_file_content"),
+    (["list file", "all files", "browse", "what files"], "list_repo_files"),
     (["search", "grep", "find text", "look for", "where is string"], "search_code"),
-    (["call graph", "callers", "callees", "who calls", "trace"], "get_call_graph"),
 ]
 
 
