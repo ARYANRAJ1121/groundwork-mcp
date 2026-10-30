@@ -3,6 +3,7 @@
 import sqlite3
 import sys
 import threading
+import time
 from datetime import datetime, timezone
 from typing import Optional
 from . import config
@@ -13,6 +14,8 @@ from .types import IngestJob, ParsedFile, SymbolRecord, EdgeRecord, CallRecord
 _local = threading.local()
 _connections: set[sqlite3.Connection] = set()
 _connections_lock = threading.Lock()
+_last_commit_time: float = 0.0
+_COMMIT_INTERVAL: float = 0.5  # seconds — throttle progress-only commits
 
 
 def get_db() -> sqlite3.Connection:
@@ -231,14 +234,19 @@ def create_job(job_id: str, repo_url: str, repo_name: str, branch: str) -> Inges
     )
 
 
-def update_job(job_id: str, **kwargs) -> None:
+def update_job(job_id: str, force_commit: bool = False, **kwargs) -> None:
+    """Update job fields. Commits immediately on status changes; throttles progress-only writes."""
     if not kwargs:
         return
     kwargs["updated_at"] = _now()
     fields = ", ".join(f"{k} = ?" for k in kwargs)
     values = list(kwargs.values()) + [job_id]
     get_db().execute(f"UPDATE jobs SET {fields} WHERE id = ?", values)
-    get_db().commit()
+    global _last_commit_time
+    now = time.monotonic()
+    if force_commit or "status" in kwargs or (now - _last_commit_time) >= _COMMIT_INTERVAL:
+        get_db().commit()
+        _last_commit_time = now
 
 
 def get_job(job_id: str) -> Optional[IngestJob]:
