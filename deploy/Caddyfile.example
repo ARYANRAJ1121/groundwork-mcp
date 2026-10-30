@@ -1,0 +1,7 @@
+mcp.example.com {
+	reverse_proxy 127.0.0.1:8000
+}
+
+map.example.com {
+	reverse_proxy 127.0.0.1:8080
+}
