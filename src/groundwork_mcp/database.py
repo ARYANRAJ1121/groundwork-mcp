@@ -146,9 +146,22 @@ CREATE TABLE IF NOT EXISTS public_snapshot_cache (
     PRIMARY KEY(repo_url, commit_sha)
 );
 
+CREATE TABLE IF NOT EXISTS semantic_chunks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    file_path TEXT NOT NULL,
+    start_line INTEGER NOT NULL,
+    end_line INTEGER NOT NULL,
+    model TEXT NOT NULL,
+    content TEXT NOT NULL,
+    embedding_json TEXT NOT NULL,
+    UNIQUE(job_id, file_path, start_line, model)
+);
+
 CREATE INDEX IF NOT EXISTS idx_calls_job    ON calls(job_id);
 CREATE INDEX IF NOT EXISTS idx_calls_callee ON calls(job_id, callee_name);
 CREATE INDEX IF NOT EXISTS idx_calls_caller ON calls(job_id, caller_function);
+CREATE INDEX IF NOT EXISTS idx_semantic_job_model ON semantic_chunks(job_id, model);
 """
 
 
@@ -363,6 +376,35 @@ def insert_edges(job_id: str, edges: list[EdgeRecord]) -> None:
 
 def commit_batch() -> None:
     get_db().commit()
+
+
+def get_semantic_sources(job_id: str) -> list[dict]:
+    """Return stored file contents for optional embedding generation."""
+    rows = get_db().execute(
+        "SELECT file_path, raw_content FROM parsed_files WHERE job_id=? AND raw_content IS NOT NULL ORDER BY file_path",
+        (job_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def replace_semantic_chunks(job_id: str, model: str, chunks: list[dict]) -> None:
+    """Atomically replace one job's semantic index for a specific embedding model."""
+    db = get_db()
+    db.execute("DELETE FROM semantic_chunks WHERE job_id=? AND model=?", (job_id, model))
+    db.executemany(
+        "INSERT INTO semantic_chunks(job_id,file_path,start_line,end_line,model,content,embedding_json) VALUES(?,?,?,?,?,?,?)",
+        [(job_id, c["file_path"], c["start_line"], c["end_line"], model, c["content"], c["embedding_json"])
+         for c in chunks],
+    )
+    db.commit()
+
+
+def get_semantic_chunks(job_id: str, model: str) -> list[dict]:
+    rows = get_db().execute(
+        "SELECT file_path,start_line,end_line,content,embedding_json FROM semantic_chunks WHERE job_id=? AND model=?",
+        (job_id, model),
+    ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def copy_unchanged_files(base_job_id: str, job_id: str, current_hashes: dict[str, str]) -> set[str]:
