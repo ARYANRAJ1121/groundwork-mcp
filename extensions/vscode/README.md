@@ -1,5 +1,9 @@
 # Groundwork MCP for VS Code and Cursor
 
+<p align="center">
+  <img src="media/groundwork-wordmark.png" width="820" alt="GROUNDWORK — just one quick grep, 47 files later.">
+</p>
+
 **Understand a codebase with evidence from its files.** Groundwork indexes your open workspace locally. An AI assistant connected to Groundwork MCP can search that index and answer with file and line citations.
 
 ## First use
