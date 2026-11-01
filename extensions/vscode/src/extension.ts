@@ -146,7 +146,7 @@ async function indexWorkspace(context: vscode.ExtensionContext, force = false): 
   for (const folder of folders) await indexFolder(context, folder, jobs, force);
 }
 
-function dashboardHtml(): string {
+function dashboardHtml(logoUri: string, cspSource: string): string {
   const nonce = randomBytes(16).toString("base64");
   const escapeHtml = (value: string): string => value.replace(/[&<>"']/g, (character) => ({
     "&": "&amp;",
@@ -160,14 +160,12 @@ function dashboardHtml(): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${cspSource}; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
   <title>Groundwork</title>
   <style>
     :root { color-scheme: light dark; }
     body { padding: 16px; color: var(--vscode-foreground); font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); line-height: 1.55; }
-    .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
-    .mark { width: 30px; height: 30px; color: var(--vscode-textLink-foreground); }
-    h1 { font-size: 18px; margin: 0; font-weight: 650; }
+    .wordmark { display: block; width: 100%; height: auto; margin: 0 0 18px; }
     .tagline { color: var(--vscode-descriptionForeground); margin: 2px 0 18px; }
     .card { border: 1px solid var(--vscode-panel-border); border-radius: 6px; padding: 12px; margin: 12px 0; background: var(--vscode-sideBar-background); }
     .state { font-weight: 600; margin-bottom: 4px; }
@@ -183,10 +181,7 @@ function dashboardHtml(): string {
   </style>
 </head>
 <body>
-  <div class="brand">
-    <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" transform="translate(3.54 16.48) scale(.01297 -.01297)" d="M942 1088H1214V156Q1214 -120 1103 -250Q954 -426 654 -426Q494 -426 385 -386Q276 -346 201 -268.5Q126 -191 90 -80H391Q431 -126 494 -149.5Q557 -173 643 -173Q753 -173 820 -139Q887 -105 914.5 -51Q942 3 942 135Q870 63 791 31.5Q712 0 612 0Q393 0 242 158Q91 316 91 558Q91 817 251 974Q396 1116 597 1116Q691 1116 774.5 1081.5Q858 1047 942 968ZM659 861Q530 861 446 774.5Q362 688 362 557Q362 421 448 334Q534 247 664 247Q791 247 873.5 332Q956 417 956 555Q956 691 873 776Q790 861 659 861Z"/></svg>
-    <div><h1>GROUNDWORK</h1><div class="muted">“just one quick grep.” — 47 files later.</div></div>
-  </div>
+  <img class="wordmark" src="${escapeHtml(logoUri)}" alt="GROUNDWORK — just one quick grep, 47 files later.">
   <p class="tagline">Give your AI assistant a searchable map of the project you’re working on.</p>
   <section class="card" aria-live="polite">
     <div class="state" id="state">${escapeHtml(status.title)}</div>
@@ -224,8 +219,9 @@ class GroundworkDashboard implements vscode.WebviewViewProvider {
 
   resolveWebviewView(view: vscode.WebviewView): void {
     dashboard = view;
-    view.webview.options = { enableScripts: true };
-    view.webview.html = dashboardHtml();
+    view.webview.options = { enableScripts: true, localResourceRoots: [this.context.extensionUri] };
+    const logoUri = view.webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "groundwork-banner.png"));
+    view.webview.html = dashboardHtml(logoUri.toString(), view.webview.cspSource);
     view.webview.onDidReceiveMessage(async (message: { command?: string }) => {
       if (message.command === "index") await indexWorkspace(this.context, true);
       if (message.command === "output") output.show(true);
