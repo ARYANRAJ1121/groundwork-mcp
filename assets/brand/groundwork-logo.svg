@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title tagline">
+  <title id="title">GROUNDWORK</title>
+  <desc id="tagline">Just one quick grep. Forty-seven files later.</desc>
+  <rect width="1600" height="900" fill="#F80505"/>
+  <g fill="#FFFFFF" text-anchor="middle">
+    <text x="800" y="424" font-family="Arial Black, Arial, sans-serif" font-size="150" font-weight="900" letter-spacing="7">GROUNDWORK</text>
+    <text x="800" y="526" font-family="Consolas, 'Courier New', monospace" font-size="38" font-weight="500" letter-spacing="0.5">“just one quick grep.” — 47 files later.</text>
+  </g>
+</svg>
