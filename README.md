@@ -2,7 +2,7 @@
 
 <div align="center">
 
-**Reverse-engineer any GitHub repository directly inside your AI assistant.**
+**Give your AI assistant a searchable, cited map of your codebase.**
 
 Ingest → Parse → Index → Query. Local-first. Source stays on your machine in local mode.
 
@@ -11,7 +11,7 @@ Ingest → Parse → Index → Query. Local-first. Source stays on your machine 
 [![Laya](https://img.shields.io/badge/Router-Laya-purple?style=flat-square)](https://github.com/NandhaKishorM/laya)
 [![SQLite](https://img.shields.io/badge/Database-SQLite-orange?style=flat-square)](https://sqlite.org)
 [![License](https://img.shields.io/badge/License-MIT-gray?style=flat-square)](LICENSE)
-[![CI](https://img.shields.io/github/actions/workflow/status/AryanRaj315/groundwork-mcp/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/AryanRaj315/groundwork-mcp/actions)
+[![CI](https://img.shields.io/github/actions/workflow/status/ARYANRAJ1121/groundwork-mcp/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/ARYANRAJ1121/groundwork-mcp/actions)
 [![PyPI](https://img.shields.io/pypi/v/groundwork-mcp?style=flat-square)](https://pypi.org/project/groundwork-mcp/)
 
 </div>
@@ -126,19 +126,21 @@ Cursor `mcp.json`:
 
 ### VS Code and Cursor workspace extension
 
-The lightweight workspace extension is in [`extensions/vscode`](extensions/vscode). It starts Groundwork over local MCP stdio and indexes each open workspace through `ingest_local_path`:
+Install the [Groundwork MCP extension from the VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=groundwork-mcp.groundwork-mcp). Click its Groundwork icon in the Activity Bar to view indexing status, re-index a workspace, and open the setup guide.
+
+The extension indexes the open workspace locally. To ask questions in VS Code Chat, Claude, or another assistant, connect that assistant to Groundwork MCP as a separate step. The extension's quick-start guide includes copyable setup instructions. In local mode, workspace source stays on the machine running Groundwork.
+
+To build the extension from source:
 
 ```bash
 cd extensions/vscode
 npm install
 npm run compile
 npx @vscode/vsce package
-code --install-extension groundwork-mcp-0.1.0.vsix
+code --install-extension groundwork-mcp-0.1.1.vsix
 ```
 
-The extension defaults to the PyPI `uvx` command. Until PyPI publishing is enabled, set `groundwork.command` to `uv` and `groundwork.args` to `run --project <path-to-groundwork-mcp> groundwork-mcp`. Automatic workspace indexing can be disabled with `groundwork.autoIndex`.
-
-Claude Desktop uses the same command and args in its `mcpServers.groundwork` entry. The PyPI command becomes live after PyPI trusted publishing is configured and a GitHub release successfully publishes the package. For the first release, add a pending trusted publisher in PyPI account settings with GitHub owner `ARYANRAJ1121`, repository `groundwork-mcp`, workflow `publish-pypi.yml`, and environment `pypi`, then publish GitHub Release `v0.6.0`. Until that succeeds, use the source setup below or the existing `v0.5.0` Docker image.
+The extension defaults to the PyPI package using `uvx --from groundwork-mcp groundwork-mcp`. Install Python 3.11+ and `uv` first. Set `groundwork.autoIndex` to `false` if you prefer to index manually. The extension's own README explains how to connect VS Code Chat, Claude Code, or Claude Desktop to the local MCP server.
 
 ### Prerequisites
 
