@@ -1,7 +1,7 @@
 [project]
 name = "groundwork-mcp"
 version = "0.6.0"
-description = "Local-first MCP server for commit-pinned, citation-grounded codebase search and architecture maps"
+description = "Local-first, cited codebase context for AI assistants—because one quick grep becomes 47 files later."
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
