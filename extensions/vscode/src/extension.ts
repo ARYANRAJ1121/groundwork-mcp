@@ -184,8 +184,8 @@ function dashboardHtml(): string {
 </head>
 <body>
   <div class="brand">
-    <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M5 6h10v8H5zM17 6h10v8H17zM5 16h10v10H5zM17 16h10v10H17z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M15 10h2M15 20h2" stroke="currentColor" stroke-width="2"/></svg>
-    <div><h1>Groundwork MCP</h1><div class="muted">Codebase context, grounded in your files</div></div>
+    <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" transform="translate(3.54 16.48) scale(.01297 -.01297)" d="M942 1088H1214V156Q1214 -120 1103 -250Q954 -426 654 -426Q494 -426 385 -386Q276 -346 201 -268.5Q126 -191 90 -80H391Q431 -126 494 -149.5Q557 -173 643 -173Q753 -173 820 -139Q887 -105 914.5 -51Q942 3 942 135Q870 63 791 31.5Q712 0 612 0Q393 0 242 158Q91 316 91 558Q91 817 251 974Q396 1116 597 1116Q691 1116 774.5 1081.5Q858 1047 942 968ZM659 861Q530 861 446 774.5Q362 688 362 557Q362 421 448 334Q534 247 664 247Q791 247 873.5 332Q956 417 956 555Q956 691 873 776Q790 861 659 861Z"/></svg>
+    <div><h1>GROUNDWORK</h1><div class="muted">“just one quick grep.” — 47 files later.</div></div>
   </div>
   <p class="tagline">Give your AI assistant a searchable map of the project you’re working on.</p>
   <section class="card" aria-live="polite">
