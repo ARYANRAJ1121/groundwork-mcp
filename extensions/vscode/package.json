@@ -2,7 +2,7 @@
   "name": "groundwork-mcp",
   "displayName": "Groundwork MCP",
   "description": "Local codebase context for AI assistants: cited answers without the 47-file grep.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "icon": "media/groundwork-icon.png",
   "publisher": "groundwork-mcp",
   "license": "MIT",
