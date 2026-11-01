@@ -1,5 +1,9 @@
 # Groundwork MCP
 
+<p align="center">
+  <img src="assets/brand/groundwork-logo.png" width="880" alt="GROUNDWORK — just one quick grep, 47 files later.">
+</p>
+
 <div align="center">
 
 **Give your AI assistant a searchable, cited map of your codebase.**
