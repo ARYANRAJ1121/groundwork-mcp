@@ -1,8 +1,8 @@
 {
   "name": "groundwork-mcp",
   "displayName": "Groundwork MCP",
-  "description": "Automatically index the current VS Code workspace with Groundwork MCP.",
-  "version": "0.1.0",
+  "description": "Index your local workspace so Groundwork-enabled AI assistants can search code with file and line citations.",
+  "version": "0.1.1",
   "publisher": "groundwork-mcp",
   "license": "MIT",
   "repository": {
@@ -14,7 +14,8 @@
     "vscode": "^1.90.0"
   },
   "categories": ["Other"],
-  "activationEvents": ["onStartupFinished", "onCommand:groundwork.indexWorkspace"],
+  "keywords": ["mcp", "codebase", "code search", "citations", "local-first", "workspace"],
+  "activationEvents": ["onStartupFinished", "onCommand:groundwork.indexWorkspace", "onView:groundwork.dashboard"],
   "main": "./out/extension.js",
   "scripts": {
     "compile": "tsc --noEmit -p . && esbuild src/extension.ts --bundle --platform=node --target=node18 --format=cjs --external:vscode --outfile=out/extension.js",
@@ -30,10 +31,40 @@
     "typescript": "^5.8.3"
   },
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "groundwork",
+          "title": "Groundwork",
+          "icon": "media/groundwork.svg"
+        }
+      ]
+    },
+    "views": {
+      "groundwork": [
+        {
+          "id": "groundwork.dashboard",
+          "name": "Welcome",
+          "type": "webview"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "groundwork.indexWorkspace",
         "title": "Groundwork: Index Workspace"
+      },
+      {
+        "command": "groundwork.openDashboard",
+        "title": "Groundwork: Open Dashboard"
+      },
+      {
+        "command": "groundwork.showOutput",
+        "title": "Groundwork: Show Indexing Log"
+      },
+      {
+        "command": "groundwork.openGuide",
+        "title": "Groundwork: Open Quick-Start Guide"
       }
     ],
     "configuration": {
