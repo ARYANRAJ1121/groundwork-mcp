@@ -1,8 +1,9 @@
 {
   "name": "groundwork-mcp",
   "displayName": "Groundwork MCP",
-  "description": "Index your local workspace so Groundwork-enabled AI assistants can search code with file and line citations.",
+  "description": "Local codebase context for AI assistants: cited answers without the 47-file grep.",
   "version": "0.1.1",
+  "icon": "media/groundwork-icon.png",
   "publisher": "groundwork-mcp",
   "license": "MIT",
   "repository": {
