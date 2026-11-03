@@ -21,8 +21,6 @@ Groundwork builds a searchable, cited map of a project so an MCP-compatible assi
 
 ---
 
-## In plain English
-
 When you ask an AI assistant about a large project, it may not know which files contain the answer. Groundwork indexes a workspace or GitHub repository, then lets a connected assistant search the code and inspect relevant files. Answers can point back to a repository, commit, file, and line range, so you can check the evidence yourself.
 
 **Groundwork makes the project searchable; your assistant uses the search results to answer.** It does not guarantee that an AI interpretation is correct, so follow citations when accuracy matters.
